@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CheiloScan — Comparisons</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-page="comparisons">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">CheiloScan</span>
+        <span class="brand-sub">lip-print research</span>
+      </div>
+      <nav class="nav">
+        <a href="/">Dashboard</a>
+        <a href="/samples">Samples</a>
+        <a href="/analyses">Analyses</a>
+        <a href="/comparisons" class="active">Comparisons</a>
+      </nav>
+      <div class="sidebar-note">
+        Experimental research tool. Outputs are descriptive measurements,
+        not biometric identification conclusions.
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="header">
+        <h1>Comparisons</h1>
+        <span class="badge badge-experimental">experimental</span>
+      </header>
+
+      <main class="content">
+        <div id="load-error" class="alert alert-error hidden" role="alert"></div>
+
+        <table class="data-table" id="comparisons-table">
+          <thead>
+            <tr>
+              <th>Sample A</th>
+              <th>Sample B</th>
+              <th>Method</th>
+              <th>Status</th>
+              <th>Created</th>
+            </tr>
+          </thead>
+          <tbody id="comparisons-tbody"></tbody>
+        </table>
+
+        <div id="empty-state" class="empty-state hidden">
+          <div class="empty-state-title">No comparisons recorded</div>
+          <p>
+            Comparing two samples requires the analysis pipeline, which is
+            implemented in a later phase. No example or placeholder
+            comparisons are shown.
+          </p>
+        </div>
+      </main>
+
+      <footer class="footer">
+        CheiloScan — local-first research application · not a validated
+        biometric identification system
+      </footer>
+    </div>
+  </div>
+  <script src="/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cheiloscan"
+version = "0.1.0"
+description = "CheiloScan - experimental local-first lip-print analysis and comparison research application"
+requires-python = ">=3.11"
+dependencies = [
+    # Phase 1 scope only (backend foundation). The imaging/scientific stack
+    # (opencv-python-headless, scikit-image, scikit-learn, scipy, reportlab)
+    # is added in its implementing phase per docs/IMPLEMENTATION_PLAN.md.
+    "flask>=3.0,<4",
+    "sqlalchemy>=2.0,<3",
+    "python-dotenv>=1.0,<2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<10",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*", "cheiloscan*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "unit: pure unit tests (no application, database or HTTP)",
+    "integration: tests exercising the application factory, database and API",
+    "regression: golden-file regression tests (deterministic pipeline outputs)",
+]
