@@ -25,3 +25,9 @@ _PAGES = {
 @ui_bp.get("/comparisons")
 def page():
     return current_app.send_static_file(_PAGES[request.path])
+
+
+@ui_bp.get("/analysis/<analysis_id>")
+def analysis_detail(analysis_id: str):
+    """Analysis detail page; the run id is read from the URL by the client."""
+    return current_app.send_static_file("analysis.html")

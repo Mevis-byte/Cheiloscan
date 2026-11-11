@@ -13,7 +13,14 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from .models import AnalysisRun, Comparison, Sample, utc_now
+from .models import (
+    AnalysisArtifact,
+    AnalysisRun,
+    Comparison,
+    ImageAsset,
+    Sample,
+    utc_now,
+)
 
 
 class SampleRepository:
@@ -81,6 +88,76 @@ class SampleRepository:
         return sample
 
 
+class ImageAssetRepository:
+    """Persistence for original and derived image assets."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def create(
+        self,
+        *,
+        sample_id: str,
+        sha256: str,
+        storage_path: str,
+        format: str,
+        width: int,
+        height: int,
+        size_bytes: int,
+        kind: str = "original",
+        capture_meta: dict | None = None,
+        parent_asset_id: str | None = None,
+    ) -> ImageAsset:
+        asset = ImageAsset(
+            sample_id=sample_id,
+            kind=kind,
+            sha256=sha256,
+            storage_path=storage_path,
+            format=format,
+            width=width,
+            height=height,
+            size_bytes=size_bytes,
+            capture_meta=capture_meta,
+            parent_asset_id=parent_asset_id,
+        )
+        self._session.add(asset)
+        self._session.flush()
+        return asset
+
+    def get(self, asset_id: str) -> ImageAsset | None:
+        return self._session.get(ImageAsset, asset_id)
+
+    def find_original_by_sha256(self, sha256: str) -> ImageAsset | None:
+        return self._session.scalar(
+            select(ImageAsset)
+            .where(ImageAsset.kind == "original", ImageAsset.sha256 == sha256)
+            .limit(1)
+        )
+
+    def latest_original_for_sample(self, sample_id: str) -> ImageAsset | None:
+        return self._session.scalar(
+            select(ImageAsset)
+            .where(
+                ImageAsset.sample_id == sample_id,
+                ImageAsset.kind == "original",
+            )
+            .order_by(ImageAsset.created_at.desc(), ImageAsset.id.desc())
+            .limit(1)
+        )
+
+    def list_for_sample(
+        self, sample_id: str, *, kind: str | None = None
+    ) -> list[ImageAsset]:
+        query = select(ImageAsset).where(ImageAsset.sample_id == sample_id)
+        if kind is not None:
+            query = query.where(ImageAsset.kind == kind)
+        return list(
+            self._session.scalars(
+                query.order_by(ImageAsset.created_at, ImageAsset.id)
+            )
+        )
+
+
 class AnalysisRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
@@ -109,6 +186,39 @@ class AnalysisRepository:
 
     def get(self, run_id: str) -> AnalysisRun | None:
         return self._session.get(AnalysisRun, run_id)
+
+    def get_with_artifacts(self, run_id: str) -> AnalysisRun | None:
+        """Load a run with its artifacts and artifact assets in one query."""
+        return self._session.scalar(
+            select(AnalysisRun)
+            .where(AnalysisRun.id == run_id)
+            .options(
+                selectinload(AnalysisRun.artifacts).selectinload(
+                    AnalysisArtifact.asset
+                )
+            )
+        )
+
+    def add_artifact(
+        self, *, run_id: str, image_asset_id: str, role: str
+    ) -> AnalysisArtifact:
+        artifact = AnalysisArtifact(
+            analysis_run_id=run_id,
+            image_asset_id=image_asset_id,
+            role=role,
+        )
+        self._session.add(artifact)
+        self._session.flush()
+        return artifact
+
+    def list_artifacts(self, run_id: str) -> list[AnalysisArtifact]:
+        return list(
+            self._session.scalars(
+                select(AnalysisArtifact)
+                .where(AnalysisArtifact.analysis_run_id == run_id)
+                .order_by(AnalysisArtifact.role)
+            )
+        )
 
     def list(
         self,

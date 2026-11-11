@@ -23,6 +23,28 @@ from flask import Flask, g, jsonify
 from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.exceptions import HTTPException
 
+from cheiloscan.imaging.pipeline import InvalidParameterError
+from cheiloscan.services.intake import IntakeError
+from cheiloscan.services.processing import ProcessingError
+
+#: HTTP status for each stable intake/processing error code.
+_DOMAIN_STATUS = {
+    # Intake.
+    "file_too_large": 413,
+    "unsupported_format": 415,
+    "invalid_image": 400,
+    "image_dimensions_invalid": 422,
+    "duplicate_image": 409,
+    "invalid_sample_metadata": 400,
+    "sample_code_conflict": 409,
+    # Processing.
+    "sample_not_found": 404,
+    "sample_has_no_image": 409,
+    "analysis_not_found": 404,
+    "processing_error": 500,
+    "invalid_parameters": 400,
+}
+
 
 def _snake_case(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
@@ -42,8 +64,40 @@ def register_error_handlers(app: Flask) -> None:
     @app.errorhandler(HTTPException)
     def handle_http_exception(exc: HTTPException):
         code = _snake_case(exc.name or "error") or "error"
+        if exc.code == 413:
+            # Keep one code for both Flask's body limit and service checks.
+            code = "file_too_large"
         message = exc.description or exc.name or "request failed"
         return _envelope(code, message, exc.code or 500)
+
+    @app.errorhandler(InvalidParameterError)
+    def handle_invalid_parameters(exc: InvalidParameterError):
+        return _envelope(
+            "invalid_parameters",
+            "invalid processing parameters",
+            400,
+            details={"errors": exc.errors},
+        )
+
+    @app.errorhandler(IntakeError)
+    def handle_intake_error(exc: IntakeError):
+        status = _DOMAIN_STATUS.get(exc.code, 400)
+        return _envelope(
+            exc.code,
+            exc.message,
+            status,
+            details=exc.details or None,
+        )
+
+    @app.errorhandler(ProcessingError)
+    def handle_processing_error(exc: ProcessingError):
+        status = _DOMAIN_STATUS.get(exc.code, 400)
+        return _envelope(
+            exc.code,
+            exc.message,
+            status,
+            details=exc.details or None,
+        )
 
     @app.errorhandler(SQLAlchemyError)
     def handle_database_error(exc: SQLAlchemyError):

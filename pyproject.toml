@@ -8,12 +8,14 @@ version = "0.1.0"
 description = "CheiloScan - experimental local-first lip-print analysis and comparison research application"
 requires-python = ">=3.11"
 dependencies = [
-    # Phase 1 scope only (backend foundation). The imaging/scientific stack
-    # (opencv-python-headless, scikit-image, scikit-learn, scipy, reportlab)
-    # is added in its implementing phase per docs/IMPLEMENTATION_PLAN.md.
+    # Phase 1: backend foundation.
     "flask>=3.0,<4",
     "sqlalchemy>=2.0,<3",
     "python-dotenv>=1.0,<2",
+    # Phase 2: image acquisition and preprocessing.
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "pillow>=10.0",
 ]
 
 [dependency-groups]

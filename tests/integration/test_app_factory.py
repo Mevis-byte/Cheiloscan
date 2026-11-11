@@ -26,7 +26,7 @@ def test_factory_creates_storage_directories(app, test_config):
 
 def test_factory_binds_database_extension(app):
     database = app.extensions["database"]
-    assert database.current_schema_version() == 1
+    assert database.current_schema_version() == 2
 
 
 def test_factory_rejects_incomplete_config(tmp_path):
@@ -43,7 +43,7 @@ def test_create_app_from_environment(tmp_path, monkeypatch):
     try:
         assert Path(app.config["DATA_DIR"]) == (tmp_path / "envdata").resolve()
         assert app.config["LOG_LEVEL"] == "DEBUG"
-        assert app.extensions["database"].current_schema_version() == 1
+        assert app.extensions["database"].current_schema_version() == 2
     finally:
         app.extensions["database"].dispose()
 

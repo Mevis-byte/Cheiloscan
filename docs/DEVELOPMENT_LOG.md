@@ -123,3 +123,63 @@ skeleton is green.
 - Dashboard/UI pages fetch only real data; no fabricated statistics anywhere.
 - `storage_path` is internal and never serialized (guarded by tests).
 - Next phase per plan: **Phase 2 — asset store (content-addressed save_original/save_derived with immutability tests) and Phase 3 intake endpoints**; the imaging stack arrives with preprocessing work.
+
+---
+
+## 2026-11-11 — Phase 2: Image acquisition and preprocessing (implemented)
+
+### What was built
+
+| Area | Contents |
+|---|---|
+| Dependencies | `numpy 2.4.6`, `opencv-python-headless 5.0.0.93`, `pillow 13.0.0` added to the pinned set (`uv sync`, committed `uv.lock`). OpenCV 5's API surface was smoke-tested before use (`imdecode`, filters, CLAHE, Laplacian, `normalize`, encode/decode flags). |
+| Image I/O | `cheiloscan/util/imageio.py`: magic-byte format detection (JPEG/PNG/WebP), decode with `IMREAD_IGNORE_ORIENTATION`, explicit EXIF-orientation transform for working copies, EXIF subset extraction via Pillow, safe display-filename sanitisation, content hashing, encoding for derived assets. |
+| Asset storage | `cheiloscan/storage/asset_store.py`: content-addressed immutable originals at `data/original/<aa>/<sha256>.<ext>` (atomic write, re-hash before accepting an existing file, best-effort read-only), per-run derived files at `data/derived/<run_id>/<role>.<ext>`, path-containment guard and strict path-component validation. |
+| Quality assessment | `cheiloscan/imaging/quality.py`: resolution, Laplacian-variance blur, mean brightness, intensity standard deviation (contrast), clipped shadow/highlight fractions, and non-blocking warnings. Every threshold is configurable; warnings never reject an image. |
+| Preprocessing | `cheiloscan/imaging/preprocess.py`: BGR↔RGB, grayscale, Gaussian/median/bilateral denoising, CLAHE, gamma, illumination correction, min-max normalisation, unsharp-mask sharpening. Pure functions, strict validation, no automatic application. |
+| Pipeline | `cheiloscan/imaging/pipeline.py`: strict parameter validation, five recorded stages (`grayscale → denoised → illumination_corrected → contrast_enhanced → final`), disabled stages pass through and are flagged `skipped`, real per-stage images, before/after quality, timings and notes. |
+| Intake service | `cheiloscan/services/intake.py`: size → format (magic bytes) → decode → absolute dimension limits → sample metadata → code uniqueness → content-hash dedupe; stores the original unmodified, records EXIF/quality/provenance in `capture_meta`, auto-generates `S-XXXXXXXX` codes. |
+| Processing service | `cheiloscan/services/processing.py`: creates a `running` run with a full parameter snapshot, encodes and persists one derived asset per stage, records measured results, and turns execution failures into a persisted `failed` run with a client-safe error (no paths). Invalid parameters abort before a run exists. |
+| Database | Schema v2: `analysis_runs.results` (JSON outputs, separate from `params` inputs) and `analysis_artifacts` `(analysis_run_id, image_asset_id, role)` with `UNIQUE(run_id, role)`. `cheiloscan/db/migrations.py` applies ordered migrations; `init_schema` creates missing tables then migrates instead of refusing older databases. |
+| API | `POST /api/samples/upload`, `POST /api/analysis/<sample_id>/process`, `GET /api/analysis/<analysis_id>`, plus UI-support endpoints `GET /api/analyses` and `GET /api/assets/<asset_id>/file`. Stable domain error codes → 400/404/409/413/415/422/500. |
+| Frontend | Drag-and-drop upload with optional metadata, real upload result (thumbnail, dimensions, hash, quality warnings), sample list with thumbnails and per-sample **Process**, analyses list, and an analysis detail page showing Original / Grayscale / Denoised / Illumination-corrected / Enhanced / Final images served from the store, before/after quality tables, parameters, timings and notes. |
+| Configuration | `CHEILOSCAN_MIN_IMAGE_DIMENSION`, `CHEILOSCAN_MAX_IMAGE_DIMENSION`, and six `CHEILOSCAN_QUALITY_*` thresholds (documented in `.env.example`, validated at startup). |
+| Tests | 222 tests, all green: 119 unit (image I/O, preprocessing, quality, pipeline, asset store) + integration upload/processing/migration cases, on top of the unchanged Phase 1 suite. |
+
+### Decisions and deviations (justified)
+
+| ID | Decision | Rationale |
+|---|---|---|
+| P2-1 | Schema v2 adds `analysis_runs.results` and an `analysis_artifacts` association table, replacing the Phase 1 deferred `ImageAsset.analysis_run_id` | SQLite cannot add a mutually-referencing foreign key pair after the fact. The association table models "one derived asset per run stage" directly and carries the `UNIQUE(run_id, role)` invariant. Inputs (`params`) and measured outputs (`results`) stay in separate columns. |
+| P2-2 | Originals are content-addressed and never rewritten; EXIF orientation is applied only to the in-memory working copy | Guarantees byte-for-byte preservation (verified by re-hashing after processing) while still processing and displaying the image the right way up. |
+| P2-3 | Format detection uses magic bytes, not filename/MIME; OpenCV does all pixel work, Pillow only reads EXIF | A mislabelled upload cannot smuggle an unsupported format, and pixel behaviour stays in one library. Pillow is not used to decode or re-encode pixels. |
+| P2-4 | Quality thresholds are experimental and produce warnings only; separate absolute dimension limits reject only unusable images | Matches the scientific-honesty constraint: the tool must not claim an image is unusable for identification, and thresholds must be tuned per capture setup. |
+| P2-5 | Pipeline stages are independently switchable; disabled stages pass through unchanged and are marked `skipped` | Prevents silently doing something different from what the stored parameters say, keeping runs reproducible. Grayscale is the only unconditional stage because groove enhancement is luminance-based. |
+| P2-6 | A failed execution is persisted as a `failed` run with a sanitised error, returned as HTTP 500 with its `analysis_id`; invalid parameters are rejected with 400 before any run is created | Failures remain visible in history for auditing, while invalid requests do not pollute the run table. No filesystem paths or exception internals reach clients. |
+| P2-7 | Extra endpoints/pages for listing runs, serving assets and opening a run (`/api/analyses`, `/api/assets/<id>/file`, `/analysis/<id>`) | Required to show real previews and real results in the UI without exposing storage paths. Not a scope expansion into later phases. |
+| P2-8 | Derived output defaults to lossless PNG (configurable per run to JPEG/WebP) | Avoids adding a second generation of lossy compression to already-compressed uploads; the researcher can choose otherwise explicitly. |
+
+### Verification performed
+
+- `uv run pytest`: **222 passed** (Phase 1 suite still green after the schema-v2 update).
+- Migration dry-run on a copy of the real v1 database: version 1→2, `results` added, `analysis_artifacts` created with its unique constraint, second run idempotent.
+- Live server (`uv run python run.py`, isolated data dir): upload → process → read run → fetch each artifact; original SHA-256 and bytes unchanged after processing; every preview URL returned a real decodable image; no `storage_path`/`derived/`/`original/` string in any API payload.
+- Error-path checks: empty/corrupt/unsupported/too-small/oversized uploads, duplicate content, duplicate code, invalid parameters, unknown sample/analysis, sample without image, and a deliberately corrupted original producing a persisted `failed` run.
+
+### Completion criteria status
+
+1. Accept JPEG/PNG/WebP with drag-and-drop — verified.
+2. Validate file, decode, size and dimensions — verified (hard rejections only for unusable content).
+3. Unique sample IDs and safe filenames — verified (auto/explicit codes, sanitised display names).
+4. Metadata extraction and immutable originals — verified (EXIF subset recorded, SHA-256 re-checked).
+5. Quality assessment with configurable warnings — verified (blur, brightness, contrast, resolution, exposure).
+6. Reusable preprocessing functions — verified (unit tests for every function and invalid inputs).
+7. Pipeline returns real stage images, quality and params — verified (persisted artifacts + results JSON).
+8. Preview UI shows real Original/Grayscale/Denoised/Enhanced images — verified live.
+9. Automated tests cover the required cases — 222 green.
+
+### Carried-forward notes
+
+- The real `data/db/app.sqlite` (v1) will migrate automatically on the next application start; no manual step is required.
+- Quality thresholds are placeholders for experimentation, not validated forensic criteria; any change must be recorded here.
+- Next phase per plan: facial/lip-print region-of-interest work and feature extraction; no identification or match-accuracy claims are made by this phase.

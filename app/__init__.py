@@ -20,6 +20,7 @@ from .logging_config import configure_logging
 from .routes import register_blueprints
 from cheiloscan.db.session import Database
 from cheiloscan.storage import ensure_storage_directories
+from cheiloscan.storage.asset_store import AssetStore
 
 APP_NAME = "cheiloscan"
 
@@ -46,6 +47,7 @@ def create_app(config: Mapping[str, object] | None = None) -> Flask:
     database = Database(app.config["DATABASE_URL"])
     database.init_schema()
     app.extensions["database"] = database
+    app.extensions["asset_store"] = AssetStore(Path(app.config["DATA_DIR"]))
 
     register_blueprints(app)
     register_error_handlers(app)

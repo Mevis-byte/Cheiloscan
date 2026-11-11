@@ -19,7 +19,7 @@ def test_dashboard_stats_empty_database_is_honestly_zero(client):
     assert body["analyses"] == {"total": 0, "by_status": {}}
     assert body["comparisons"] == {"total": 0, "by_status": {}}
     assert body["storage"]["bytes"] >= 0  # db file exists: nonzero in practice
-    assert body["database"]["schema_version"] == 1
+    assert body["database"]["schema_version"] == 2
     assert body["generated_at"].endswith("Z")
 
 

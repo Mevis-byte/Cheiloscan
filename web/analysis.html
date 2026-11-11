@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CheiloScan — Analysis</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-page="analysis">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">CheiloScan</span>
+        <span class="brand-sub">lip-print research</span>
+      </div>
+      <nav class="nav">
+        <a href="/">Dashboard</a>
+        <a href="/samples">Samples</a>
+        <a href="/analyses" class="active">Analyses</a>
+        <a href="/comparisons">Comparisons</a>
+      </nav>
+      <div class="sidebar-note">
+        Experimental research tool. Outputs are descriptive measurements,
+        not biometric identification conclusions.
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="header">
+        <h1>Analysis run</h1>
+        <span id="run-status" class="badge">–</span>
+        <span class="badge badge-experimental">experimental</span>
+      </header>
+
+      <main class="content">
+        <div id="load-error" class="alert alert-error hidden" role="alert"></div>
+        <div id="run-error" class="alert alert-error hidden" role="alert"></div>
+
+        <section class="panel">
+          <div class="run-meta" id="run-meta">Loading run…</div>
+        </section>
+
+        <section class="panel">
+          <h2>Processing preview</h2>
+          <p class="hint">
+            Every image below is a real pipeline output stored on this machine.
+            Nothing is upscaled or synthesised for display.
+          </p>
+          <div class="preview-grid" id="preview-grid"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Quality measurements</h2>
+          <div id="quality-panel"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Parameters and timing</h2>
+          <div id="params-panel"></div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        CheiloScan — local-first research application · not a validated
+        biometric identification system
+      </footer>
+    </div>
+  </div>
+  <script src="/js/app.js"></script>
+</body>
+</html>

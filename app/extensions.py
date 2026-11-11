@@ -5,6 +5,7 @@ from __future__ import annotations
 from flask import current_app
 
 from cheiloscan.db.session import Database
+from cheiloscan.storage.asset_store import AssetStore
 
 
 def get_database() -> Database:
@@ -16,3 +17,14 @@ def get_database() -> Database:
             "database extension is not initialized; was create_app used?"
         ) from exc
     return database
+
+
+def get_asset_store() -> AssetStore:
+    """Return the asset store extension bound to the current application."""
+    try:
+        store: AssetStore = current_app.extensions["asset_store"]
+    except KeyError as exc:
+        raise RuntimeError(
+            "asset store extension is not initialized; was create_app used?"
+        ) from exc
+    return store

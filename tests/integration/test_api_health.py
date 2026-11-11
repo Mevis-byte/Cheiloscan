@@ -8,7 +8,7 @@ def test_health_returns_ok(client):
     assert body["status"] == "ok"
     assert body["app"] == "cheiloscan"
     assert body["version"]
-    assert body["database"] == {"connected": True, "schema_version": 1}
+    assert body["database"] == {"connected": True, "schema_version": 2}
 
 
 def test_health_reports_dependency_versions(client):

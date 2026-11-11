@@ -16,6 +16,9 @@ Entity mapping (see docs/ARCHITECTURE.md §6.2 and the Phase 1 instruction):
                     metadata (lifecycle timestamps, error text).
 - ``Comparison``  — the instruction's COMPARISON entity: sample pair,
                     comparison method, results and status.
+- ``AnalysisArtifact`` — association row binding a derived image asset to
+                    the analysis run and pipeline stage that produced it
+                    (added in schema v2, Phase 2).
 - ``SchemaVersion``— schema bookkeeping for safe initialization.
 
 Deferred from the Phase 0 schema (added in their implementing phases, so
@@ -23,10 +26,11 @@ that no unused/placeholder code exists now):
 
 - ``FeatureSet``  (analysis results, Phase 6)
 - ``Report``      (PDF reports, Phase 8)
-- ``ImageAsset.analysis_run_id`` — the reverse run link for derived assets.
-  It cannot coexist with ``AnalysisRun.input_asset_id`` as a pair of mutually
-  referencing foreign keys on SQLite (no ALTER TABLE ADD CONSTRAINT), so it
-  will be introduced via a proper migration when derived assets exist (Phase 4).
+
+Phase 1 planned ``ImageAsset.analysis_run_id`` as the reverse run link for
+derived assets. That pair of mutually referencing foreign keys cannot be
+added to SQLite after the fact, so Phase 2 introduced the
+``AnalysisArtifact`` association table instead (schema v2).
 
 All timestamps are stored as naive UTC datetimes.
 """
@@ -47,6 +51,7 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -54,7 +59,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 #: Current application schema version. Bump on any schema change and record
 #: the migration in docs/DEVELOPMENT_LOG.md.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def new_uuid() -> str:
@@ -215,6 +220,10 @@ class AnalysisRun(TimestampMixin, Base):
     pipeline_name: Mapped[str] = mapped_column(String(120), nullable=False)
     pipeline_version: Mapped[str] = mapped_column(String(40), nullable=False)
     params: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Measured outputs of the run (quality before/after, stage timings, notes).
+    # Kept separate from ``params`` (the input snapshot) so inputs and outputs
+    # are never mixed in one field.
+    results: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(
         SaEnum(
             "pending",
@@ -233,6 +242,51 @@ class AnalysisRun(TimestampMixin, Base):
 
     sample: Mapped[Sample] = relationship(back_populates="analyses")
     input_asset: Mapped[ImageAsset | None] = relationship()
+    artifacts: Mapped[list[AnalysisArtifact]] = relationship(
+        back_populates="run",
+        order_by="AnalysisArtifact.role",
+        cascade="save-update, merge",
+    )
+
+
+class AnalysisArtifact(TimestampMixin, Base):
+    """A derived image produced by an analysis run, addressed by its role.
+
+    One row per pipeline stage output (``grayscale``, ``denoised``,
+    ``illumination_corrected``, ``contrast_enhanced``, ``final``). The
+    unique constraint on ``(analysis_run_id, role)`` guarantees a run has at
+    most one artifact per stage; the artifact itself points at a normal
+    ``ImageAsset`` (kind ``derived``) so hashing, storage and serving are
+    shared with originals.
+
+    This is the Phase 2 replacement for the deferred
+    ``ImageAsset.analysis_run_id`` reverse link noted in Phase 1: an
+    association table avoids mutually referencing foreign keys, which SQLite
+    cannot add after the fact.
+    """
+
+    __tablename__ = "analysis_artifacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_run_id", "role", name="uq_analysis_artifact_role"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    analysis_run_id: Mapped[str] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    image_asset_id: Mapped[str] = mapped_column(
+        ForeignKey("image_assets.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(String(40), nullable=False)
+
+    run: Mapped[AnalysisRun] = relationship(back_populates="artifacts")
+    asset: Mapped[ImageAsset] = relationship()
 
 
 class Comparison(TimestampMixin, Base):

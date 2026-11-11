@@ -13,6 +13,7 @@ EXPECTED_TABLES = {
     "samples",
     "image_assets",
     "analysis_runs",
+    "analysis_artifacts",
     "comparisons",
     "schema_version",
 }

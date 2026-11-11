@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.config import default_database_url
+from cheiloscan.db.models import SCHEMA_VERSION
 from cheiloscan.db.repositories import SampleRepository, ComparisonRepository
 from cheiloscan.db.session import Database
 from cheiloscan.storage import ensure_storage_directories
@@ -32,7 +33,7 @@ def test_records_survive_engine_disposal(tmp_path):
     # A brand-new engine over the same file must see the committed data.
     second = _open_database(data_dir)
     try:
-        assert second.init_schema() == 1  # idempotent on existing schema
+        assert second.init_schema() == SCHEMA_VERSION  # idempotent on existing schema
         with second.session() as session:
             repository = SampleRepository(session)
             assert repository.get_by_code("PERSIST-A") is not None

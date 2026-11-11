@@ -32,15 +32,32 @@
       </header>
 
       <main class="content">
-        <div class="empty-state">
-          <div class="empty-state-title">Analysis runs are not implemented yet</div>
-          <p>
-            The lip-print analysis pipeline (preprocessing, region
-            detection, enhancement, feature extraction) is implemented in a
-            later phase. This page will list recorded analysis runs once
-            they exist. Nothing here is simulated.
-          </p>
-        </div>
+        <div id="load-error" class="alert alert-error hidden" role="alert"></div>
+
+        <section class="panel">
+          <table class="data-table" id="analyses-table">
+            <thead>
+              <tr>
+                <th>Sample</th>
+                <th>Status</th>
+                <th>Pipeline</th>
+                <th>Artifacts</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="analyses-tbody"></tbody>
+          </table>
+
+          <div id="empty-state" class="empty-state hidden">
+            <div class="empty-state-title">No analysis runs yet</div>
+            <p>
+              Open a sample and press <strong>Process</strong> to run the
+              preprocessing pipeline. Only real runs appear here; nothing is
+              simulated.
+            </p>
+          </div>
+        </section>
       </main>
 
       <footer class="footer">

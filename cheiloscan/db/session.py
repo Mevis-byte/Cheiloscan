@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from .migrations import apply_migrations
 from .models import SCHEMA_VERSION, Base, SchemaVersion
 
 
@@ -43,13 +44,14 @@ class Database:
             session.close()
 
     def init_schema(self) -> int:
-        """Create tables if absent and verify/stamp the schema version.
+        """Create tables if absent, then migrate to ``SCHEMA_VERSION``.
 
-        Idempotent. Refuses to run silently against an incompatible schema:
+        Idempotent and safe to call on every application startup.
 
-        - database newer than the application -> error (downgrade unsupported);
-        - database older than the application  -> error (explicit migration
-          required; none exist yet, so this cannot legitimately happen).
+        - fresh database          -> tables created, version stamped;
+        - older database          -> ordered migrations applied, then stamped;
+        - newer database          -> error (downgrade is never automatic);
+        - same version            -> no-op.
         """
         Base.metadata.create_all(self.engine)
         with self.engine.begin() as connection:
@@ -60,17 +62,18 @@ class Database:
                 )
                 return SCHEMA_VERSION
             found = int(row[0])
-        if found > SCHEMA_VERSION:
-            raise RuntimeError(
-                f"database schema version {found} is newer than this "
-                f"application (expects {SCHEMA_VERSION}); refusing to start"
-            )
-        if found < SCHEMA_VERSION:
-            raise RuntimeError(
-                f"database schema version {found} is older than this "
-                f"application (expects {SCHEMA_VERSION}); a migration is "
-                "required before starting"
-            )
+            if found > SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"database schema version {found} is newer than this "
+                    f"application (expects {SCHEMA_VERSION}); refusing to start"
+                )
+            if found < SCHEMA_VERSION:
+                apply_migrations(connection, found, SCHEMA_VERSION)
+                connection.execute(
+                    SchemaVersion.__table__.update().values(
+                        version=SCHEMA_VERSION
+                    )
+                )
         return SCHEMA_VERSION
 
     def current_schema_version(self) -> int:

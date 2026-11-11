@@ -34,29 +34,96 @@
       <main class="content">
         <div id="load-error" class="alert alert-error hidden" role="alert"></div>
 
-        <table class="data-table" id="samples-table">
-          <thead>
-            <tr>
-              <th>Code</th>
-              <th>Capture type</th>
-              <th>Medium</th>
-              <th>Consent</th>
-              <th>Images</th>
-              <th>Analyses</th>
-              <th>Created</th>
-            </tr>
-          </thead>
-          <tbody id="samples-tbody"></tbody>
-        </table>
-
-        <div id="empty-state" class="empty-state hidden">
-          <div class="empty-state-title">No samples registered</div>
-          <p>
-            Sample registration is read-only in this phase. Creating
-            samples and uploading lip-print images arrives with the image
-            intake phase.
+        <section class="panel">
+          <h2>Upload an image</h2>
+          <p class="hint">
+            JPEG, PNG or WebP. The original file is stored unmodified
+            (content-addressed); processing always works on derived copies.
           </p>
-        </div>
+
+          <form id="upload-form" novalidate>
+            <div id="dropzone" class="dropzone" tabindex="0" role="button"
+                 aria-label="Drop an image here or press Enter to choose a file">
+              <input type="file" id="file-input" hidden
+                     accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
+              <p class="dropzone-title">Drop an image here</p>
+              <p class="hint">or click to choose a file</p>
+              <p id="file-selected" class="file-selected hidden"></p>
+            </div>
+
+            <details class="metadata">
+              <summary>Optional sample metadata</summary>
+              <div class="form-grid">
+                <label>Sample code
+                  <input name="code" maxlength="120" placeholder="auto-generated if empty">
+                </label>
+                <label>Capture type
+                  <select name="capture_type">
+                    <option value="">unspecified</option>
+                    <option value="print_document">print document</option>
+                    <option value="photograph">photograph</option>
+                  </select>
+                </label>
+                <label>Medium
+                  <input name="medium" placeholder="e.g. lipstick on paper">
+                </label>
+                <label>Collection method
+                  <input name="collection_method">
+                </label>
+                <label>Donor reference
+                  <input name="donor_ref" maxlength="120">
+                </label>
+                <label>Captured at
+                  <input type="datetime-local" name="captured_at">
+                </label>
+                <label class="checkbox">
+                  <input type="checkbox" name="consent_confirmed">
+                  Consent confirmed
+                </label>
+                <label class="wide">Research notes
+                  <textarea name="research_notes" rows="2"></textarea>
+                </label>
+              </div>
+            </details>
+
+            <div class="actions">
+              <button type="submit" id="upload-submit" class="button button-primary" disabled>
+                Upload
+              </button>
+              <button type="reset" id="upload-reset" class="button">Clear</button>
+            </div>
+          </form>
+
+          <div id="upload-status" class="hidden" aria-live="polite"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Recorded samples</h2>
+          <table class="data-table" id="samples-table">
+            <thead>
+              <tr>
+                <th>Image</th>
+                <th>Code</th>
+                <th>Capture type</th>
+                <th>Consent</th>
+                <th>Images</th>
+                <th>Analyses</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="samples-tbody"></tbody>
+          </table>
+
+          <div id="empty-state" class="empty-state hidden">
+            <div class="empty-state-title">No samples registered</div>
+            <p>
+              Upload a lip-print image above to create the first sample.
+              Originals are stored unmodified and every measurement shown is
+              computed from real data.
+            </p>
+          </div>
+        </section>
       </main>
 
       <footer class="footer">

@@ -22,6 +22,7 @@ def _iso_utc(value: datetime | None) -> str | None:
 
 
 def serialize_image_asset(asset: ImageAsset) -> dict:
+    meta = asset.capture_meta or {}
     return {
         "id": asset.id,
         "sample_id": asset.sample_id,
@@ -33,6 +34,11 @@ def serialize_image_asset(asset: ImageAsset) -> dict:
         "size_bytes": asset.size_bytes,
         "parent_asset_id": asset.parent_asset_id,
         "created_at": _iso_utc(asset.created_at),
+        # Provenance/measurement summaries only; internal paths are excluded.
+        "original_filename": meta.get("original_filename"),
+        "quality": meta.get("quality"),
+        "role": meta.get("role"),
+        "file_url": f"/api/assets/{asset.id}/file",
     }
 
 
@@ -82,12 +88,28 @@ def serialize_analysis_run(run: AnalysisRun) -> dict:
     return {
         "id": run.id,
         "sample_id": run.sample_id,
+        "input_asset_id": run.input_asset_id,
         "pipeline_name": run.pipeline_name,
         "pipeline_version": run.pipeline_version,
         "status": str(run.status),
         "params": run.params,
+        "results": run.results,
         "error": run.error,
         "created_at": _iso_utc(run.created_at),
         "started_at": _iso_utc(run.started_at),
         "finished_at": _iso_utc(run.finished_at),
+    }
+
+
+def serialize_artifact(artifact) -> dict:
+    asset = artifact.asset
+    return {
+        "role": artifact.role,
+        "asset_id": artifact.image_asset_id,
+        "file_url": f"/api/assets/{artifact.image_asset_id}/file",
+        "format": asset.format if asset is not None else None,
+        "width": asset.width if asset is not None else None,
+        "height": asset.height if asset is not None else None,
+        "size_bytes": asset.size_bytes if asset is not None else None,
+        "sha256": asset.sha256 if asset is not None else None,
     }

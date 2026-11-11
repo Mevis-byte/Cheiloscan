@@ -21,6 +21,18 @@ VALID_ENVIRONMENTS = {"development", "production"}
 DEFAULT_DATA_DIR = "data"
 DEFAULT_MAX_UPLOAD_MB = 25
 
+#: Absolute dimension limits (hard rejection outside this range).
+DEFAULT_MIN_IMAGE_DIMENSION = 128
+DEFAULT_MAX_IMAGE_DIMENSION = 12000
+
+#: Experimental quality thresholds (warnings only, never auto-rejection).
+DEFAULT_QUALITY_RECOMMENDED_MIN_DIMENSION = 400
+DEFAULT_QUALITY_MIN_BLUR_VARIANCE = 60.0
+DEFAULT_QUALITY_MIN_BRIGHTNESS = 40.0
+DEFAULT_QUALITY_MAX_BRIGHTNESS = 215.0
+DEFAULT_QUALITY_MIN_CONTRAST = 25.0
+DEFAULT_QUALITY_MAX_CLIPPED_FRACTION = 0.02
+
 # Configuration keys used by the application factory.
 CONFIG_KEYS = (
     "SECRET_KEY",
@@ -32,6 +44,14 @@ CONFIG_KEYS = (
     "MAX_CONTENT_LENGTH",
     "LOG_LEVEL",
     "LOG_FORMAT",
+    "MIN_IMAGE_DIMENSION",
+    "MAX_IMAGE_DIMENSION",
+    "QUALITY_RECOMMENDED_MIN_DIMENSION",
+    "QUALITY_MIN_BLUR_VARIANCE",
+    "QUALITY_MIN_BRIGHTNESS",
+    "QUALITY_MAX_BRIGHTNESS",
+    "QUALITY_MIN_CONTRAST",
+    "QUALITY_MAX_CLIPPED_FRACTION",
 )
 
 
@@ -52,6 +72,14 @@ def _get_int(env: Mapping[str, str], name: str, default: int) -> int:
         return int(raw)
     except ValueError as exc:
         raise ConfigurationError(f"{name} must be an integer, got {raw!r}") from exc
+
+
+def _get_float(env: Mapping[str, str], name: str, default: float) -> float:
+    raw = _get(env, name, str(default))
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ConfigurationError(f"{name} must be a number, got {raw!r}") from exc
 
 
 def default_database_url(data_dir: Path) -> str:
@@ -93,6 +121,58 @@ def load_config_from_env(
             f"CHEILOSCAN_MAX_UPLOAD_MB must be positive, got {max_upload_mb}"
         )
 
+    min_dimension = _get_int(
+        env, ENV_PREFIX + "MIN_IMAGE_DIMENSION", DEFAULT_MIN_IMAGE_DIMENSION
+    )
+    max_dimension = _get_int(
+        env, ENV_PREFIX + "MAX_IMAGE_DIMENSION", DEFAULT_MAX_IMAGE_DIMENSION
+    )
+    if min_dimension <= 0:
+        raise ConfigurationError(
+            f"CHEILOSCAN_MIN_IMAGE_DIMENSION must be positive, got {min_dimension}"
+        )
+    if max_dimension <= min_dimension:
+        raise ConfigurationError(
+            "CHEILOSCAN_MAX_IMAGE_DIMENSION must be greater than "
+            f"CHEILOSCAN_MIN_IMAGE_DIMENSION (got {max_dimension} <= {min_dimension})"
+        )
+
+    recommended = _get_int(
+        env,
+        ENV_PREFIX + "QUALITY_RECOMMENDED_MIN_DIMENSION",
+        DEFAULT_QUALITY_RECOMMENDED_MIN_DIMENSION,
+    )
+    min_blur = _get_float(
+        env, ENV_PREFIX + "QUALITY_MIN_BLUR_VARIANCE", DEFAULT_QUALITY_MIN_BLUR_VARIANCE
+    )
+    min_brightness = _get_float(
+        env, ENV_PREFIX + "QUALITY_MIN_BRIGHTNESS", DEFAULT_QUALITY_MIN_BRIGHTNESS
+    )
+    max_brightness = _get_float(
+        env, ENV_PREFIX + "QUALITY_MAX_BRIGHTNESS", DEFAULT_QUALITY_MAX_BRIGHTNESS
+    )
+    min_contrast = _get_float(
+        env, ENV_PREFIX + "QUALITY_MIN_CONTRAST", DEFAULT_QUALITY_MIN_CONTRAST
+    )
+    max_clipped = _get_float(
+        env,
+        ENV_PREFIX + "QUALITY_MAX_CLIPPED_FRACTION",
+        DEFAULT_QUALITY_MAX_CLIPPED_FRACTION,
+    )
+    if min_blur < 0:
+        raise ConfigurationError("CHEILOSCAN_QUALITY_MIN_BLUR_VARIANCE must be >= 0")
+    if min_brightness >= max_brightness:
+        raise ConfigurationError(
+            "CHEILOSCAN_QUALITY_MIN_BRIGHTNESS must be below "
+            "CHEILOSCAN_QUALITY_MAX_BRIGHTNESS"
+        )
+    if min_contrast < 0:
+        raise ConfigurationError("CHEILOSCAN_QUALITY_MIN_CONTRAST must be >= 0")
+    if not 0.0 <= max_clipped <= 1.0:
+        raise ConfigurationError(
+            "CHEILOSCAN_QUALITY_MAX_CLIPPED_FRACTION must be between 0 and 1"
+        )
+
     data_dir = Path(
         _get(env, ENV_PREFIX + "DATA_DIR", DEFAULT_DATA_DIR)
     ).expanduser().resolve()
@@ -120,6 +200,14 @@ def load_config_from_env(
         "DATA_DIR": str(data_dir),
         "DATABASE_URL": database_url,
         "MAX_CONTENT_LENGTH": max_upload_mb * 1024 * 1024,
+        "MIN_IMAGE_DIMENSION": min_dimension,
+        "MAX_IMAGE_DIMENSION": max_dimension,
+        "QUALITY_RECOMMENDED_MIN_DIMENSION": recommended,
+        "QUALITY_MIN_BLUR_VARIANCE": min_blur,
+        "QUALITY_MIN_BRIGHTNESS": min_brightness,
+        "QUALITY_MAX_BRIGHTNESS": max_brightness,
+        "QUALITY_MIN_CONTRAST": min_contrast,
+        "QUALITY_MAX_CLIPPED_FRACTION": max_clipped,
         "LOG_LEVEL": log_level,
         "LOG_FORMAT": log_format,
         "HOST": _get(env, ENV_PREFIX + "HOST", "127.0.0.1"),
