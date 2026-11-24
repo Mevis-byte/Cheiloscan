@@ -16,6 +16,8 @@ dependencies = [
     "numpy>=1.26",
     "opencv-python-headless>=4.9",
     "pillow>=10.0",
+    # Production WSGI server (cross-platform, single process).
+    "waitress>=3.0,<4",
 ]
 
 [dependency-groups]
@@ -24,7 +26,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["app*", "cheiloscan*"]
+include = ["app*", "cheiloscan*", "web*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

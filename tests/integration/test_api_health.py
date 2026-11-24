@@ -1,6 +1,20 @@
 """Integration tests: health endpoint."""
 
 
+def test_liveness_and_readiness(client):
+    live = client.get("/api/health/live")
+    assert live.status_code == 200
+    assert live.get_json()["status"] == "ok"
+
+    ready = client.get("/api/health/ready")
+    assert ready.status_code == 200
+    body = ready.get_json()
+    assert body["status"] == "ok"
+    assert body["database"]["connected"] is True
+    assert body["storage"]["writable"] is True
+    assert body["storage"]["free_bytes"] > 0
+
+
 def test_health_returns_ok(client):
     response = client.get("/api/health")
     assert response.status_code == 200
@@ -9,6 +23,7 @@ def test_health_returns_ok(client):
     assert body["app"] == "cheiloscan"
     assert body["version"]
     assert body["database"] == {"connected": True, "schema_version": 2}
+    assert body["storage"]["bytes_used"] >= 0
 
 
 def test_health_reports_dependency_versions(client):

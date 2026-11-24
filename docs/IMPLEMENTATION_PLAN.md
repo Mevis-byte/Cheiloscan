@@ -1,7 +1,13 @@
 # CheiloScan — Implementation Plan
 
-**Status:** Phase 0 planning document (no implementation yet)
-**Date:** 2026-11-11
+**Status:** Phase 0 planning document; implementation status updated 2026-11-24
+**Date:** 2026-11-11 (planning), 2026-11-24 (deployment hardening)
+
+> **Current release:** phases 0–2 are implemented (222 baseline tests), plus
+> production hardening (241 tests total). Phases 3–8 — ROI, feature extraction,
+> comparison, reporting — remain future work. Implemented paths use `/api/*`,
+> not the `/api/v1/*` spelling used in this plan (deviation P1-1). `README.md`
+> is the deployment guide; the bootstrap instructions in §5 below are historical.
 
 ---
 
@@ -230,6 +236,12 @@ Goal: research-usable v0.1.
 
 **Acceptance:** fresh-clone bootstrap (venv → install → run → smoke test) works
 from documentation alone.
+
+**2026-11-24 hardening note:** README, `uv.lock`, Dockerfile/Compose, Nginx
+example, CI workflow and fail-fast production config satisfy the bootstrap and
+deployment parts of this phase. Storage export/orphan reconciliation and the
+final scientific risk review remain open; feature/report phases 3–8 are not
+part of v0.1.
 
 ---
 

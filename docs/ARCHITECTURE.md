@@ -1,8 +1,12 @@
 # CheiloScan — Architecture
 
-**Status:** Phase 0 planning document (no implementation yet)
-**Date:** 2026-11-11
+**Status:** Phase 0 planning document; implementation status updated 2026-11-24
+**Date:** 2026-11-11 (planning), 2026-11-24 (deployment hardening)
 **Scope:** Automated lip-print analysis and comparison — *experimental research tool*
+
+> **Current release:** phases 0–2 plus production hardening are implemented.
+> Feature extraction, comparison scoring and PDF reports in this document are
+> *target design*, not shipped behaviour. See §7 and `README.md`.
 
 ---
 
@@ -23,8 +27,9 @@ See `SCIENTIFIC_METHODOLOGY.md` for the scientific constraints behind this.
 
 - No cloud services, no network calls at runtime, no paid APIs.
 - No claim of validated matching accuracy (no error-rate statistics without data).
-- No multi-user authentication/authorization in the first iteration (single
-  researcher, local machine). Network exposure is explicitly out of scope.
+- No multi-user roles or per-record authorization. The deployed release has one
+  HTTP Basic account; per-user access control and network policy belong at the
+  TLS reverse proxy. Local-only binding remains the development default.
 - No modification of original images, ever.
 - No fabrication of research data: synthetic imagery exists **only** inside the
   test suite and is labeled as such; it is never stored as or presented as a sample.
@@ -159,6 +164,10 @@ Phase 1 (a simple test that walks the package and asserts the import rule).
 
 ## 5. Core data flow
 
+The flows below describe the target design. The implemented subset is listed in
+§7; comparison and reporting steps are future phases and are not available in
+v0.1.
+
 ### 5.1 Ingestion
 
 1. Client `POST /api/v1/samples/{id}/images` (multipart).
@@ -230,8 +239,9 @@ data/
   `CHEILOSCAN_DATA_DIR` at a path on the Linux ext4 filesystem (e.g.
   `~/cheiloscan-data`). Documented, not blocking.
 - **Disk headroom warning:** the Windows drive currently has ~8.1 GB free.
-  Deriving several artifacts per run means storage grows quickly; a storage-usage
-  readout is included in `/api/v1/health` from Phase 2 onward.
+  Deriving several artifacts per run means storage grows quickly; the implemented
+  `/api/health` endpoint reports measured `bytes_used`, and `/api/health/ready`
+  reports free space. Monitor both before large intake batches.
 
 ### 6.2 Entities and relationships (SQLAlchemy 2.x, typed)
 
@@ -276,10 +286,28 @@ Notes:
 
 ---
 
-## 7. API surface (v1)
+## 7. API surface (v1 target; implemented subset)
 
-All endpoints under `/api/v1`, JSON in/out (except multipart upload and file
-streaming). Uniform error envelope:
+The Phase 0 design used `/api/v1/*`; the implemented release uses `/api/*`
+(deviation P1-1 in `DEVELOPMENT_LOG.md`). **Implemented in v0.1:**
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/health/live` | Public process liveness |
+| GET | `/api/health/ready` | Basic-auth DB/storage readiness |
+| GET | `/api/health` | Basic-auth versions, DB and measured storage usage |
+| GET | `/api/dashboard/stats` | Real counts and storage usage |
+| GET | `/api/samples` | Paginated samples |
+| POST | `/api/samples/upload` | Multipart image intake |
+| POST | `/api/analysis/<sample_id>/process` | Run preprocessing |
+| GET | `/api/analysis/<analysis_id>` | Run detail, artifacts, measured results |
+| GET | `/api/analyses` | Paginated run history |
+| GET | `/api/assets/<asset_id>/file` | Stored image bytes |
+| GET | `/api/comparisons` | Empty history placeholder |
+
+All other endpoints in the target table below belong to phases 3–8 and are
+**not implemented**. JSON in/out except multipart upload and file streaming.
+Uniform error envelope:
 
 ```json
 { "error": { "code": "validation_failed", "message": "...", "details": {...} } }
@@ -305,13 +333,16 @@ streaming). Uniform error envelope:
 | POST | `/comparisons/{id}/report` | Generate PDF report |
 | GET | `/reports/{id}` / `GET /reports/{id}/download` | Report metadata / PDF bytes |
 
-Frontend: `GET /` serves the static single-page UI which talks to `/api/v1`
+Frontend: `GET /` serves the static multi-page UI which talks to `/api/*`
 via `fetch`. No template logic in Flask beyond serving static files (keeps the
-HTTP layer thin; the UI is fully offline-capable).
+HTTP layer thin; the UI is fully offline-capable). In production the whole UI is
+behind HTTP Basic auth.
 
-**Upload limits:** max request body and per-file size configurable
-(`CHEILOSCAN_MAX_UPLOAD_MB`, default 25 MB). Accepted: PNG, JPEG. Other formats
-(TIFF) deferred — see unresolved questions.
+**Upload limits:** max request body configurable (`CHEILOSCAN_MAX_UPLOAD_MB`,
+default 25 MB, hard maximum 100 MB), plus an absolute pixel budget
+(`CHEILOSCAN_MAX_IMAGE_PIXELS`, default 20 MP) checked from image headers before
+decoding. Accepted: PNG, JPEG, WebP. TIFF is deferred — see unresolved questions.
+Quality thresholds produce warnings only and never reject an image.
 
 ---
 
@@ -360,27 +391,56 @@ sqlalchemy==2.1.8       reportlab==5.1.0      pytest==9.2.0
 
 ## 9. Cross-cutting concerns
 
-- **Logging:** structured-ish plain logging via Python `logging`; request-scoped
-  correlation IDs. No third-party logging framework.
-- **Errors:** HTTP exceptions mapped to the JSON envelope; unexpected exceptions
-  logged with stack trace, run status set to `failed` with stored error string.
-- **Security (local threat model):** file-type allowlist + real decode check (not
-  extension trust), upload size caps, no path traversal (content-addressed
-  names only), no eval/dynamic code from parameters, no network listeners beyond
-  localhost by default (`flask run --host 127.0.0.1`). Lip prints are
-  biometric-adjacent personal data: storage stays local, donor references are
-  anonymized, and a `consent_confirmed` flag is required on samples.
-- **Performance:** single-user workloads; images processed synchronously
-  (seconds each). If runs exceed ~10 s, move to a background worker thread pool
-  with run status polling (API already shaped for it: runs are first-class
-  resources with `status`).
-- **Concurrency:** SQLite WAL + busy timeout; the pipeline runner uses one
-  session per run. Multi-process (gunicorn) deployment is explicitly *not* a
-  target.
+- **Logging:** structured JSON or plain logging via Python `logging`, with
+  request-scoped correlation IDs. Unexpected exceptions include full stack
+  traces, which can contain SQL parameters or local paths: logs are sensitive
+  operational records and must be protected like the data directory.
+- **Errors:** HTTP/domain exceptions mapped to the JSON envelope; unexpected
+  exceptions logged, and failed pipeline runs persisted with a client-safe
+  error string (no filesystem paths).
+- **Security (deployed threat model):** magic-byte format detection + real
+  decode, header dimension and pixel-budget checks before pixel buffers are
+  allocated, content-addressed paths confined to the data directory, no
+  eval/dynamic code from parameters. Development binds to loopback only.
+  Production requires a single HTTP Basic account behind a trusted TLS proxy,
+  plus `CHEILOSCAN_ALLOWED_HOSTS`, same-origin checks for unsafe methods,
+  `X-Forwarded-*` trust limited to one configured hop, HSTS, strict security
+  headers and conservative cache policies. Lip prints are biometric-adjacent
+  personal data: storage stays local, `donor_ref` is anonymized, and
+  `consent_confirmed` is recorded metadata — the operator must enforce the
+  institutional consent policy because the field is not a technical gate in
+  this release.
+- **Performance:** synchronous preprocessing, but image work now happens
+  outside any database transaction; only short writes persist the run and
+  artifacts. Waitress runs one process with 1–4 threads and a 120 s channel
+  timeout; the proxy example allows 300 s. If runs regularly exceed that,
+  move to a background worker with status polling (`status` already exists).
+- **Concurrency:** SQLite WAL + busy timeout and a single writer process.
+  Multi-process Gunicorn/uWSGI deployment is explicitly *not* a target;
+  horizontal scaling would require a different database. Unique constraints
+  resolve upload races as 409 conflicts, not 500s.
 
 ---
 
-## 10. Coherence checklist (Phase 0 self-review)
+## 10. Production deployment (implemented v0.1)
+
+`README.md` is the operator guide. Artifacts: `Dockerfile`, `docker-compose.yml`,
+`.dockerignore`, `serve.py` (Waitress, one process), `wsgi.py` (single-worker
+WSGI import), `deploy/nginx.conf.example` (TLS termination and header rewriting)
+and `.github/workflows/ci.yml`. Waitress is configured to preserve
+`X-Forwarded-*` for the app's `ProxyFix`; therefore its listening port must be
+reachable only from the trusted proxy.
+
+Production starts only with a secret key, Basic-auth credentials, a trusted
+proxy hop, HTTPS enforcement and an allowed-host list. `/api/health/live` is
+public and bypasses Host/TLS checks for internal probes; `/api/health/ready`
+and `/api/health` require credentials. Back up the
+database with `sqlite3.Connection.backup()` together with the original/derived
+stores — never copy only the WAL-backed database file while running.
+
+---
+
+## 11. Coherence checklist (Phase 0 self-review)
 
 - [x] Every derived artifact traces to an `AnalysisRun` with a parameter snapshot.
 - [x] Originals have no write path anywhere in the design.

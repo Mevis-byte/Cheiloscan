@@ -1,6 +1,6 @@
 # CheiloScan — Scientific Methodology
 
-**Status:** Phase 0 planning document (no implementation yet)
+**Status:** Phase 0 scientific methodology; current implementation notes added 2026-11-24
 **Date:** 2026-11-11
 
 ---
@@ -60,7 +60,9 @@ sample records:
 - `medium` (e.g., lipstick type/paper, scanner bed)
 - `collection_method` (free-text protocol note: pressure, technique)
 - `donor_ref` (anonymized researcher-controlled label; no PII)
-- `consent_confirmed` (boolean; required before analysis)
+- `consent_confirmed` (boolean; recorded when supplied. Implementation note:
+  v0.1 does not block analysis on this field — the operator must enforce the
+  institutional consent policy before ingesting real samples.)
 
 These fields are metadata for interpretation and later research stratification —
 they are not used to alter computed features. The pipeline does **not** attempt to

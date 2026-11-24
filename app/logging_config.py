@@ -8,6 +8,10 @@ Two formats are supported:
 - ``plain``: human-readable single-line format for development.
 
 Only the standard library is used; no third-party logging package.
+
+Log caveat: unexpected exceptions include full stack traces, which can contain
+SQL parameters or local paths. Logs are operational records of sensitive
+research data and must be stored with the same care as the data directory.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import traceback
 from datetime import datetime, timezone
 
 from flask import Flask
@@ -43,7 +48,9 @@ class JsonFormatter(logging.Formatter):
             if key not in _RESERVED_RECORD_ATTRS and not key.startswith("_"):
                 payload[key] = value
         if record.exc_info:
-            payload["exception"] = repr(record.exc_info[1])
+            payload["exception"] = "".join(
+                traceback.format_exception(*record.exc_info)
+            )
         return json.dumps(payload, default=str)
 
 
@@ -58,7 +65,9 @@ class PlainFormatter(logging.Formatter):
             if key not in _RESERVED_RECORD_ATTRS and not key.startswith("_")
         }
         if record.exc_info:
-            extras["exception"] = repr(record.exc_info[1])
+            extras["exception"] = "".join(
+                traceback.format_exception(*record.exc_info)
+            )
         if extras:
             return f"{base} {json.dumps(extras, default=str)}"
         return base

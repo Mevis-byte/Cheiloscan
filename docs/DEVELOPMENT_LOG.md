@@ -183,3 +183,51 @@ skeleton is green.
 - The real `data/db/app.sqlite` (v1) will migrate automatically on the next application start; no manual step is required.
 - Quality thresholds are placeholders for experimentation, not validated forensic criteria; any change must be recorded here.
 - Next phase per plan: facial/lip-print region-of-interest work and feature extraction; no identification or match-accuracy claims are made by this phase.
+
+---
+
+## 2026-11-24 — Production hardening and deployment readiness
+
+### Scope
+
+Full project audit with a security/deployment review and a functional-correctness
+review, followed by hardening of the existing Phase 0–2 application. No scientific
+scope was added: comparison scoring, feature extraction and reports remain future
+phases. The baseline was **222 passing tests**; the hardened tree has **241**.
+
+### Decisions and changes
+
+| ID | Decision | Rationale |
+|---|---|---|
+| H1 | Production now fails fast unless `SECRET_KEY` (≥32 chars), Basic-auth credentials, a trusted proxy hop, HTTPS enforcement and an allowed-host list are configured; development refuses a non-loopback bind | The previous `production` mode only disabled DEBUG, leaving an unauthenticated service that could transmit Basic credentials in cleartext or expose the Werkzeug debugger. |
+| H2 | Added `app/security.py`: HTTP Basic against a Werkzeug hash, per-process failed-login throttle, Host allowlist, strict `(scheme, host, port)` Origin checks, `Sec-Fetch-Site` checks, `ProxyFix`, HSTS, security headers and cache policies | The app holds biometric-adjacent research data and has no session layer; a single account is honest about the threat model while making accidental network exposure safe by default. |
+| H3 | `/api/health/live` is public and deliberately bypasses Host/TLS checks; `/api/health/ready` and `/api/health` remain authenticated and report real DB/schema/storage state | Container orchestrators probe over plain loopback HTTP before a public hostname or TLS proxy exists. Detailed state should not be public. |
+| H4 | Header dimensions and a configurable pixel budget are checked **before** `cv2.imdecode`; upload size/dimension/thread bounds are capped | A tiny highly-compressible image can declare a multi-gigapixel buffer; decoding first would allocate it before any limit could reject it. |
+| H5 | Processing decodes/processes/encodes outside the DB transaction and persists the run in one short write; upload uniqueness races map to 409; list endpoints use `selectinload` | A CPU-heavy run previously held a SQLite write lock for its whole duration, blocking other writers until `busy_timeout`, and DB constraint races surfaced as 500s. |
+| H6 | Added `serve.py` (Waitress, one process, 1–4 threads), `wsgi.py`, `Dockerfile` (non-root, locked deps), `docker-compose.yml`, `.dockerignore`, `deploy/nginx.conf.example`, CI workflow and README | No deployable entrypoint or reproducible operator path existed. `uv.lock` was regenerated after adding Waitress. |
+| H7 | Waitress is configured with `clear_untrusted_proxy_headers=False` | Waitress 3 clears `X-Forwarded-*` by default, which silently broke `ProxyFix`/`FORCE_HTTPS` in the first live smoke test. The app port must therefore remain reachable only from the trusted proxy that overwrites those headers. |
+| H8 | Reconciled status text in docs, documented `/api/*` vs planned `/api/v1/*`, WebP support, optional `consent_confirmed`, sensitive logs, single-worker constraint and deployment/backups | The planning documents still read as if nothing were implemented and contradicted the shipped behaviour. |
+| H9 | Frontend escaping now covers quotes, ID path segments are URL-encoded, stale "later phase" UI copy was corrected | CSP limits script execution but attribute-unsafe escaping could still corrupt markup or URLs. |
+
+### Verification performed
+
+- `uv lock --check`: clean; `uv sync --frozen` with `.venv-win`: clean.
+- `uv run --frozen pytest -q`: **241 passed** (222 baseline + 19 new hardening/regression cases).
+- Live production smoke via `serve.py` on a temporary data directory with simulated
+  trusted-proxy headers: `/api/health/live` → 200 without credentials; plain-HTTP
+  protected route → 308; authenticated `/api/health/ready` → 200; protected route
+  without credentials → 401; bad `Host` → 400; cross-origin `Origin` → 403;
+  upload → 201; preprocessing → 201 `succeeded` with five real artifacts; asset
+  download → 200 with a valid PNG signature; run detail → 200; HSTS/CSP/no-store
+  headers present. Temporary data and credentials were discarded afterwards.
+- The first smoke run exposed the Waitress 3 proxy-header clearing issue; it was
+  fixed and covered by `tests/unit/test_serve.py` before the final green run.
+
+### Carried forward
+
+- `README.md` is now the deployment source of truth; `docs/ARCHITECTURE.md` §7
+  distinguishes implemented endpoints from the phase 3–8 target surface.
+- Background processing, per-user authorization, orphan-asset reconciliation,
+  storage export and golden-file regression tests remain open work.
+- Multi-process WSGI workers against one SQLite/WAL data directory remain
+  explicitly unsupported; scaling requires a different database.

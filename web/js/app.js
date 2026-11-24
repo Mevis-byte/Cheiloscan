@@ -24,7 +24,13 @@ function formatTimestamp(iso) {
 function escapeHtml(value) {
   const div = document.createElement("div");
   div.textContent = value === null || value === undefined ? "" : String(value);
-  return div.innerHTML;
+  // textContent->innerHTML escapes &, < and > but not quotes; escape those
+  // too so the same helper is safe in double- and single-quoted attributes.
+  return div.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function encodeSegment(value) {
+  return encodeURIComponent(value === null || value === undefined ? "" : String(value));
 }
 
 function showLoadError(message) {
@@ -319,12 +325,12 @@ async function processSample(sampleId, button) {
     button.textContent = "Processing…";
   }
   try {
-    const result = await apiPostJson(`/api/analysis/${sampleId}/process`, {});
-    window.location.href = `/analysis/${result.analysis.id}`;
+    const result = await apiPostJson(`/api/analysis/${encodeSegment(sampleId)}/process`, {});
+    window.location.href = `/analysis/${encodeSegment(result.analysis.id)}`;
   } catch (error) {
     const analysisId = error.details && error.details.analysis_id;
     if (analysisId) {
-      window.location.href = `/analysis/${analysisId}`;
+      window.location.href = `/analysis/${encodeSegment(analysisId)}`;
       return;
     }
     if (button) {
@@ -360,7 +366,7 @@ async function initAnalyses() {
       <td>${escapeHtml(run.pipeline_name)} v${escapeHtml(run.pipeline_version)}</td>
       <td>${run.artifact_count}</td>
       <td>${formatTimestamp(run.created_at)}</td>
-      <td><a class="button button-sm" href="/analysis/${escapeHtml(run.id)}">Open</a></td>`;
+      <td><a class="button button-sm" href="/analysis/${encodeSegment(run.id)}">Open</a></td>`;
     tbody.appendChild(row);
   }
   setEmptyState(data.total === 0);
@@ -430,7 +436,7 @@ async function initAnalysis() {
 
   let data;
   try {
-    data = await apiGet(`/api/analysis/${id}`);
+    data = await apiGet(`/api/analysis/${encodeSegment(id)}`);
   } catch (error) {
     showLoadError(describeError(error));
     return;

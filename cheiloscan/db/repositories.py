@@ -75,7 +75,12 @@ class SampleRepository:
         )
         items = list(
             self._session.scalars(
-                base.order_by(Sample.code).limit(limit).offset(offset)
+                base.options(
+                    selectinload(Sample.images), selectinload(Sample.analyses)
+                )
+                .order_by(Sample.code)
+                .limit(limit)
+                .offset(offset)
             )
         )
         return items, int(total or 0)
@@ -171,15 +176,19 @@ class AnalysisRepository:
         params: dict | None = None,
         status: str = "pending",
         input_asset_id: str | None = None,
+        run_id: str | None = None,
     ) -> AnalysisRun:
-        run = AnalysisRun(
-            sample_id=sample_id,
-            pipeline_name=pipeline_name,
-            pipeline_version=pipeline_version,
-            params=params if params is not None else {},
-            status=status,
-            input_asset_id=input_asset_id,
-        )
+        fields: dict[str, object] = {
+            "sample_id": sample_id,
+            "pipeline_name": pipeline_name,
+            "pipeline_version": pipeline_version,
+            "params": params if params is not None else {},
+            "status": status,
+            "input_asset_id": input_asset_id,
+        }
+        if run_id is not None:
+            fields["id"] = run_id
+        run = AnalysisRun(**fields)
         self._session.add(run)
         self._session.flush()
         return run
@@ -238,7 +247,11 @@ class AnalysisRepository:
         )
         items = list(
             self._session.scalars(
-                base.order_by(AnalysisRun.created_at.desc(), AnalysisRun.id)
+                base.options(
+                    selectinload(AnalysisRun.sample),
+                    selectinload(AnalysisRun.artifacts),
+                )
+                .order_by(AnalysisRun.created_at.desc(), AnalysisRun.id)
                 .limit(limit)
                 .offset(offset)
             )

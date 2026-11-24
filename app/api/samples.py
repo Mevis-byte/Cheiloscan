@@ -80,6 +80,7 @@ def _intake_config() -> IntakeConfig:
         max_upload_bytes=int(config["MAX_CONTENT_LENGTH"]),
         min_dimension=int(config["MIN_IMAGE_DIMENSION"]),
         max_dimension=int(config["MAX_IMAGE_DIMENSION"]),
+        max_pixels=int(config["MAX_IMAGE_PIXELS"]),
         thresholds=thresholds,
     )
 

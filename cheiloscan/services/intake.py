@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..db.models import ImageAsset, Sample, utc_now
@@ -33,7 +34,9 @@ from ..util.imageio import (
     ImageDecodeError,
     UnsupportedFormatError,
     decode_image,
+    image_header_dimensions,
     sanitize_filename,
+    sniff_format,
 )
 
 #: Allowed ``Sample.capture_type`` values (mirrors the model enum).
@@ -89,6 +92,7 @@ class IntakeConfig:
     max_upload_bytes: int = 25 * 1024 * 1024
     min_dimension: int = 128
     max_dimension: int = 12000
+    max_pixels: int = 20_000_000
     thresholds: QualityThresholds = field(default_factory=QualityThresholds)
 
 
@@ -105,6 +109,40 @@ class IntakeResult:
 def generate_sample_code() -> str:
     """Auto-generate a unique-looking sample identifier (``S-XXXXXXXX``)."""
     return f"S-{uuid4().hex[:8].upper()}"
+
+
+def _check_dimensions(width: int, height: int, config: IntakeConfig) -> None:
+    """Apply absolute dimension and pixel-budget limits to one image."""
+    shortest = min(width, height)
+    longest = max(width, height)
+    if shortest < config.min_dimension:
+        raise ImageDimensionsError(
+            "the image is too small for reliable processing",
+            details={
+                "width": width,
+                "height": height,
+                "min_dimension": config.min_dimension,
+            },
+        )
+    if longest > config.max_dimension:
+        raise ImageDimensionsError(
+            "the image exceeds the maximum supported dimensions",
+            details={
+                "width": width,
+                "height": height,
+                "max_dimension": config.max_dimension,
+            },
+        )
+    if width * height > config.max_pixels:
+        raise ImageDimensionsError(
+            "the image exceeds the maximum supported pixel count",
+            details={
+                "width": width,
+                "height": height,
+                "pixels": width * height,
+                "max_pixels": config.max_pixels,
+            },
+        )
 
 
 def intake_image(
@@ -138,35 +176,29 @@ def intake_image(
             },
         )
 
-    # 2. Format + 3. decode (magic bytes, then real decoding).
+    # 2. Format (magic bytes, never the client-supplied filename).
+    if sniff_format(data) is None:
+        raise UnsupportedImageError(
+            "unsupported image format; expected JPEG, PNG or WebP"
+        )
+
+    # 3. Header dimensions + pixel budget, BEFORE decoding. A tiny compressed
+    # file can describe a multi-gigapixel image; decoding first would allocate
+    # that buffer before any limit could be applied.
+    try:
+        header_width, header_height = image_header_dimensions(data)
+    except ImageDecodeError as exc:
+        raise CorruptImageError(str(exc)) from exc
+    _check_dimensions(header_width, header_height, config)
+
+    # 4. Real decoding (catches truncated/corrupt pixel data).
     try:
         decoded = decode_image(data)
     except UnsupportedFormatError as exc:
         raise UnsupportedImageError(str(exc)) from exc
     except ImageDecodeError as exc:
         raise CorruptImageError(str(exc)) from exc
-
-    # 4. Dimensions.
-    shortest = min(decoded.width, decoded.height)
-    longest = max(decoded.width, decoded.height)
-    if shortest < config.min_dimension:
-        raise ImageDimensionsError(
-            "the image is too small for reliable processing",
-            details={
-                "width": decoded.width,
-                "height": decoded.height,
-                "min_dimension": config.min_dimension,
-            },
-        )
-    if longest > config.max_dimension:
-        raise ImageDimensionsError(
-            "the image exceeds the maximum supported dimensions",
-            details={
-                "width": decoded.width,
-                "height": decoded.height,
-                "max_dimension": config.max_dimension,
-            },
-        )
+    _check_dimensions(decoded.width, decoded.height, config)
 
     # 5. Sample metadata.
     if capture_type is not None and capture_type not in CAPTURE_TYPES:
@@ -218,17 +250,6 @@ def intake_image(
     quality = assess_quality(decoded.bgr, config.thresholds)
     stored = store.save_original(data, decoded.format)
 
-    sample = samples.create(
-        code=code,
-        research_notes=research_notes,
-        capture_type=capture_type,
-        medium=medium,
-        collection_method=collection_method,
-        donor_ref=donor_ref,
-        consent_confirmed=consent_confirmed,
-        captured_at=captured_at,
-    )
-
     capture_meta = {
         "source": "upload",
         "original_filename": sanitize_filename(filename),
@@ -239,6 +260,7 @@ def intake_image(
         "intake": {
             "min_dimension": config.min_dimension,
             "max_dimension": config.max_dimension,
+            "max_pixels": config.max_pixels,
             "quality_thresholds": {
                 "recommended_min_dimension": config.thresholds.recommended_min_dimension,
                 "min_blur_variance": config.thresholds.min_blur_variance,
@@ -250,17 +272,44 @@ def intake_image(
         },
     }
 
-    asset = assets.create(
-        sample_id=sample.id,
-        kind="original",
-        sha256=stored.sha256,
-        storage_path=stored.relative_path,
-        format=decoded.format,
-        width=decoded.width,
-        height=decoded.height,
-        size_bytes=stored.size_bytes,
-        capture_meta=capture_meta,
-    )
+    # The pre-checks above are intentionally friendly conflict messages; the
+    # unique constraints are the real guarantee. A concurrent upload can win
+    # the race between them, so translate the resulting IntegrityError into
+    # the same stable 409 instead of a generic database_error.
+    try:
+        sample = samples.create(
+            code=code,
+            research_notes=research_notes,
+            capture_type=capture_type,
+            medium=medium,
+            collection_method=collection_method,
+            donor_ref=donor_ref,
+            consent_confirmed=consent_confirmed,
+            captured_at=captured_at,
+        )
+        asset = assets.create(
+            sample_id=sample.id,
+            kind="original",
+            sha256=stored.sha256,
+            storage_path=stored.relative_path,
+            format=decoded.format,
+            width=decoded.width,
+            height=decoded.height,
+            size_bytes=stored.size_bytes,
+            capture_meta=capture_meta,
+        )
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        if samples.get_by_code(code) is not None:
+            raise SampleCodeConflictError(
+                f"a sample with code {code!r} already exists",
+                details={"code": code},
+            ) from exc
+        raise DuplicateImageError(
+            "this image has already been uploaded",
+            details={"sha256": decoded.sha256},
+        ) from exc
 
     return IntakeResult(
         sample=sample, asset=asset, quality=quality, decoded=decoded

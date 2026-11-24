@@ -18,6 +18,7 @@ from .config import CONFIG_KEYS, load_config_from_env
 from .errors import register_error_handlers
 from .logging_config import configure_logging
 from .routes import register_blueprints
+from .security import install_security
 from cheiloscan.db.session import Database
 from cheiloscan.storage import ensure_storage_directories
 from cheiloscan.storage.asset_store import AssetStore
@@ -52,6 +53,15 @@ def create_app(config: Mapping[str, object] | None = None) -> Flask:
     register_blueprints(app)
     register_error_handlers(app)
     _register_request_hooks(app)
+
+    if app.config["AUTH_ENABLED"] and not (
+        app.config["AUTH_USERNAME"] and app.config["AUTH_PASSWORD_HASH"]
+    ):
+        raise ValueError(
+            "authentication is enabled but AUTH_USERNAME / "
+            "AUTH_PASSWORD_HASH are missing"
+        )
+    install_security(app)
     return app
 
 

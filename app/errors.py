@@ -25,6 +25,7 @@ from werkzeug.exceptions import HTTPException
 
 from cheiloscan.imaging.pipeline import InvalidParameterError
 from cheiloscan.services.intake import IntakeError
+from cheiloscan.storage.asset_store import StorageError
 from cheiloscan.services.processing import ProcessingError
 
 #: HTTP status for each stable intake/processing error code.
@@ -97,6 +98,15 @@ def register_error_handlers(app: Flask) -> None:
             exc.message,
             status,
             details=exc.details or None,
+        )
+
+    @app.errorhandler(StorageError)
+    def handle_storage_error(exc: StorageError):
+        app.logger.exception("storage error", extra={"request_id": g.get("request_id")})
+        return _envelope(
+            "storage_error",
+            "A storage error occurred while processing the request.",
+            500,
         )
 
     @app.errorhandler(SQLAlchemyError)

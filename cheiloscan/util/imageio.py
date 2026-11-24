@@ -189,6 +189,25 @@ def apply_exif_orientation(bgr: np.ndarray, orientation: int) -> np.ndarray:
     return bgr
 
 
+def image_header_dimensions(data: bytes) -> tuple[int, int]:
+    """Read width/height from an image header without decoding pixel data.
+
+    Used by intake to reject decompression bombs *before* OpenCV allocates a
+    potentially huge pixel buffer. The header is parsed by Pillow lazily; no
+    image data is expanded here.
+    """
+    if not data:
+        raise ImageDecodeError("file is empty")
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            width, height = image.size
+        return int(width), int(height)
+    except Exception as exc:  # Pillow raises several format-specific errors
+        raise ImageDecodeError(
+            "image header could not be read; the file may be corrupt or truncated"
+        ) from exc
+
+
 def decode_image(data: bytes) -> DecodedImage:
     """Validate and decode uploaded bytes into a BGR working image.
 

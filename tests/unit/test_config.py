@@ -69,15 +69,60 @@ def test_invalid_configuration_fails_fast(overrides):
         load_config_from_env(env=overrides)
 
 
-def test_production_requires_secret_key():
+def test_production_requires_secret_key_and_auth():
     config = load_config_from_env(
         env={
             "CHEILOSCAN_ENV": "production",
-            "CHEILOSCAN_SECRET_KEY": "a-real-secret",
+            "CHEILOSCAN_SECRET_KEY": "a-long-random-production-secret-key",
+            "CHEILOSCAN_AUTH_USERNAME": "researcher",
+            "CHEILOSCAN_AUTH_PASSWORD_HASH": "scrypt:32768:8:1$abc$def",
+            "CHEILOSCAN_BEHIND_PROXY": "1",
+            "CHEILOSCAN_FORCE_HTTPS": "1",
+            "CHEILOSCAN_ALLOWED_HOSTS": "research.example.org",
         }
     )
-    assert config["SECRET_KEY"] == "a-real-secret"
+    assert config["SECRET_KEY"] == "a-long-random-production-secret-key"
     assert config["DEBUG"] is False
+    assert config["AUTH_ENABLED"] is True
+    assert config["THREADS"] == 2
+    assert config["BEHIND_PROXY"] is True
+    assert config["FORCE_HTTPS"] is True
+
+
+def test_production_requires_tls_termination():
+    base = {
+        "CHEILOSCAN_ENV": "production",
+        "CHEILOSCAN_SECRET_KEY": "a-long-random-production-secret-key",
+        "CHEILOSCAN_AUTH_USERNAME": "researcher",
+        "CHEILOSCAN_AUTH_PASSWORD_HASH": "scrypt:32768:8:1$abc$def",
+    }
+    with pytest.raises(ConfigurationError, match="TLS"):
+        load_config_from_env(env=base)
+    config = load_config_from_env(
+        env={
+            **base,
+            "CHEILOSCAN_BEHIND_PROXY": "1",
+            "CHEILOSCAN_FORCE_HTTPS": "1",
+            "CHEILOSCAN_ALLOWED_HOSTS": "research.example.org",
+        }
+    )
+    assert config["ALLOWED_HOSTS"] == ("research.example.org",)
+    assert config["FORCE_HTTPS"] is True
+
+
+def test_development_refuses_non_loopback_debug_bind():
+    with pytest.raises(ConfigurationError, match="loopback"):
+        load_config_from_env(env={"CHEILOSCAN_HOST": "0.0.0.0"})
+
+
+def test_short_secret_is_rejected():
+    with pytest.raises(ConfigurationError, match="at least 32"):
+        load_config_from_env(env={"CHEILOSCAN_SECRET_KEY": "short"})
+
+
+def test_pixel_budget_is_configurable():
+    config = load_config_from_env(env={"CHEILOSCAN_MAX_IMAGE_PIXELS": "5000000"})
+    assert config["MAX_IMAGE_PIXELS"] == 5_000_000
 
 
 def test_env_example_exists_and_documents_variables():
@@ -91,5 +136,17 @@ def test_env_example_exists_and_documents_variables():
         "CHEILOSCAN_LOG_LEVEL",
         "CHEILOSCAN_LOG_FORMAT",
         "CHEILOSCAN_SECRET_KEY",
+        "CHEILOSCAN_AUTH_USERNAME",
+        "CHEILOSCAN_AUTH_PASSWORD_HASH",
+        "CHEILOSCAN_AUTH_MAX_FAILURES",
+        "CHEILOSCAN_AUTH_LOCKOUT_SECONDS",
+        "CHEILOSCAN_BEHIND_PROXY",
+        "CHEILOSCAN_TRUSTED_PROXY_COUNT",
+        "CHEILOSCAN_FORCE_HTTPS",
+        "CHEILOSCAN_ALLOWED_HOSTS",
+        "CHEILOSCAN_HOST",
+        "CHEILOSCAN_PORT",
+        "CHEILOSCAN_THREADS",
+        "CHEILOSCAN_MAX_IMAGE_PIXELS",
     ):
         assert variable in content

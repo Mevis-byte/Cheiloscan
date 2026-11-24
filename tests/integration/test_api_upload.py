@@ -23,6 +23,15 @@ def _stored_asset(database, asset_id: str):
         return ImageAssetRepository(session).get(asset_id)
 
 
+def test_upload_rejects_images_above_the_pixel_budget(client, app):
+    app.config["MAX_IMAGE_PIXELS"] = 1_000
+    response = _upload(client, fixtures_gen.valid_png())
+    assert response.status_code == 422
+    body = response.get_json()
+    assert body["error"]["code"] == "image_dimensions_invalid"
+    assert body["error"]["details"]["max_pixels"] == 1_000
+
+
 def test_upload_valid_png_creates_sample_and_original(client, database):
     payload = fixtures_gen.valid_png()
     response = _upload(client, payload, "lip print.png")

@@ -1,8 +1,9 @@
 """Serve stored image assets to the browser.
 
 Assets are immutable (originals are content-addressed and derived files are
-per-run), so responses are marked privately cacheable. The internal storage
-path is resolved server-side and never included in the response.
+per-run), but they are biometric-adjacent research images: responses are marked
+``private, no-store`` so browsers do not retain them on shared machines. The
+internal storage path is resolved server-side and never included in the response.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from werkzeug.exceptions import NotFound
 
 from ..extensions import get_asset_store, get_database
 from cheiloscan.db.repositories import ImageAssetRepository
+from cheiloscan.storage.asset_store import StorageError
 from cheiloscan.util.imageio import MIME_TYPES, STORAGE_EXTENSIONS
 
 assets_bp = Blueprint("assets", __name__, url_prefix="/api/assets")
@@ -29,7 +31,11 @@ def serve_asset(asset_id: str):
         image_format = asset.format
         digest = asset.sha256
 
-    path = store.resolve(storage_path)
+    try:
+        path = store.resolve(storage_path)
+    except StorageError as exc:
+        # Never expose the stored path or containment failure details.
+        raise NotFound("the stored asset file is unavailable") from exc
     if not path.is_file():
         raise NotFound("the stored asset file is missing")
 
@@ -39,7 +45,7 @@ def serve_asset(asset_id: str):
         mimetype=MIME_TYPES.get(image_format, "application/octet-stream"),
         download_name=f"{digest}.{extension}",
         conditional=True,
-        max_age=31536000,
+        max_age=0,
     )
-    response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+    response.headers["Cache-Control"] = "private, no-store"
     return response

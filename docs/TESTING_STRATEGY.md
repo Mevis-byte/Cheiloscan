@@ -1,7 +1,12 @@
 # CheiloScan — Testing Strategy
 
-**Status:** Phase 0 planning document (no implementation yet)
-**Date:** 2026-11-11
+**Status:** Phase 0 planning document; implementation status updated 2026-11-24
+**Date:** 2026-11-11 (planning), 2026-11-24 (deployment hardening)
+
+> **Current suite:** 241 passing tests (`uv run --frozen pytest -q`), including
+> integration coverage for the HTTP security controls, health probes, pixel
+> budget, upload/processing flows and schema migration. Golden-file regression
+> tests for later deterministic feature extraction are still pending.
 
 ---
 

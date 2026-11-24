@@ -9,6 +9,7 @@ application factory is called).
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Mapping
 
@@ -17,9 +18,23 @@ ENV_PREFIX = "CHEILOSCAN_"
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 VALID_LOG_FORMATS = {"json", "plain"}
 VALID_ENVIRONMENTS = {"development", "production"}
+TRUE_VALUES = {"1", "true", "yes", "on"}
+FALSE_VALUES = {"0", "false", "no", "off"}
 
 DEFAULT_DATA_DIR = "data"
 DEFAULT_MAX_UPLOAD_MB = 25
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 5000
+DEFAULT_THREADS = 2
+DEFAULT_MAX_IMAGE_PIXELS = 20_000_000
+DEFAULT_AUTH_MAX_FAILURES = 10
+DEFAULT_AUTH_LOCKOUT_SECONDS = 60
+MIN_SECRET_KEY_LENGTH = 32
+MAX_UPLOAD_MB = 100
+MAX_IMAGE_DIMENSION_LIMIT = 20_000
+
+#: Werkzeug hash methods accepted for CHEILOSCAN_AUTH_PASSWORD_HASH.
+_PASSWORD_HASH_PREFIX = re.compile(r"^(?:scrypt|pbkdf2|argon2)[:$]", re.IGNORECASE)
 
 #: Absolute dimension limits (hard rejection outside this range).
 DEFAULT_MIN_IMAGE_DIMENSION = 128
@@ -46,12 +61,25 @@ CONFIG_KEYS = (
     "LOG_FORMAT",
     "MIN_IMAGE_DIMENSION",
     "MAX_IMAGE_DIMENSION",
+    "MAX_IMAGE_PIXELS",
     "QUALITY_RECOMMENDED_MIN_DIMENSION",
     "QUALITY_MIN_BLUR_VARIANCE",
     "QUALITY_MIN_BRIGHTNESS",
     "QUALITY_MAX_BRIGHTNESS",
     "QUALITY_MIN_CONTRAST",
     "QUALITY_MAX_CLIPPED_FRACTION",
+    "HOST",
+    "PORT",
+    "THREADS",
+    "AUTH_ENABLED",
+    "AUTH_USERNAME",
+    "AUTH_PASSWORD_HASH",
+    "AUTH_MAX_FAILURES",
+    "AUTH_LOCKOUT_SECONDS",
+    "BEHIND_PROXY",
+    "TRUSTED_PROXY_COUNT",
+    "FORCE_HTTPS",
+    "ALLOWED_HOSTS",
 )
 
 
@@ -80,6 +108,30 @@ def _get_float(env: Mapping[str, str], name: str, default: float) -> float:
         return float(raw)
     except ValueError as exc:
         raise ConfigurationError(f"{name} must be a number, got {raw!r}") from exc
+
+
+def _get_bool(env: Mapping[str, str], name: str, default: bool) -> bool:
+    raw = _get(env, name, str(default)).strip().lower()
+    if raw in TRUE_VALUES:
+        return True
+    if raw in FALSE_VALUES:
+        return False
+    raise ConfigurationError(f"{name} must be a boolean, got {raw!r}")
+
+
+def _get_hosts(env: Mapping[str, str], name: str) -> tuple[str, ...]:
+    raw = _get(env, name)
+    hosts = tuple(
+        dict.fromkeys(
+            item.strip().lower()
+            for item in raw.split(",")
+            if item.strip()
+        )
+    )
+    for host in hosts:
+        if any(character.isspace() for character in host):
+            raise ConfigurationError(f"{name} contains an invalid host: {host!r}")
+    return hosts
 
 
 def default_database_url(data_dir: Path) -> str:
@@ -116,9 +168,10 @@ def load_config_from_env(
         )
 
     max_upload_mb = _get_int(env, ENV_PREFIX + "MAX_UPLOAD_MB", DEFAULT_MAX_UPLOAD_MB)
-    if max_upload_mb <= 0:
+    if not 1 <= max_upload_mb <= MAX_UPLOAD_MB:
         raise ConfigurationError(
-            f"CHEILOSCAN_MAX_UPLOAD_MB must be positive, got {max_upload_mb}"
+            f"CHEILOSCAN_MAX_UPLOAD_MB must be between 1 and {MAX_UPLOAD_MB}, "
+            f"got {max_upload_mb}"
         )
 
     min_dimension = _get_int(
@@ -126,6 +179,9 @@ def load_config_from_env(
     )
     max_dimension = _get_int(
         env, ENV_PREFIX + "MAX_IMAGE_DIMENSION", DEFAULT_MAX_IMAGE_DIMENSION
+    )
+    max_pixels = _get_int(
+        env, ENV_PREFIX + "MAX_IMAGE_PIXELS", DEFAULT_MAX_IMAGE_PIXELS
     )
     if min_dimension <= 0:
         raise ConfigurationError(
@@ -135,6 +191,16 @@ def load_config_from_env(
         raise ConfigurationError(
             "CHEILOSCAN_MAX_IMAGE_DIMENSION must be greater than "
             f"CHEILOSCAN_MIN_IMAGE_DIMENSION (got {max_dimension} <= {min_dimension})"
+        )
+    if max_dimension > MAX_IMAGE_DIMENSION_LIMIT:
+        raise ConfigurationError(
+            "CHEILOSCAN_MAX_IMAGE_DIMENSION must not exceed "
+            f"{MAX_IMAGE_DIMENSION_LIMIT} pixels"
+        )
+    if not min_dimension * min_dimension <= max_pixels <= 100_000_000:
+        raise ConfigurationError(
+            "CHEILOSCAN_MAX_IMAGE_PIXELS must be at least the square of the "
+            "minimum dimension and at most 100000000"
         )
 
     recommended = _get_int(
@@ -186,10 +252,87 @@ def load_config_from_env(
         raise ConfigurationError(
             "CHEILOSCAN_SECRET_KEY must be set when CHEILOSCAN_ENV=production"
         )
+    if secret_key and len(secret_key) < MIN_SECRET_KEY_LENGTH:
+        raise ConfigurationError(
+            f"CHEILOSCAN_SECRET_KEY must contain at least {MIN_SECRET_KEY_LENGTH} "
+            "characters"
+        )
     if not secret_key:
         # Development fallback: ephemeral per-process key. Only acceptable
         # because no sessions or cookies with security guarantees exist yet.
         secret_key = os.urandom(32).hex()
+
+    username = _get(env, ENV_PREFIX + "AUTH_USERNAME")
+    password_hash = _get(env, ENV_PREFIX + "AUTH_PASSWORD_HASH")
+    if password_hash and not _PASSWORD_HASH_PREFIX.match(password_hash):
+        raise ConfigurationError(
+            "CHEILOSCAN_AUTH_PASSWORD_HASH must be a Werkzeug hash generated "
+            "with `python -m app.security hash-password`"
+        )
+    if bool(username) != bool(password_hash):
+        raise ConfigurationError(
+            "CHEILOSCAN_AUTH_USERNAME and CHEILOSCAN_AUTH_PASSWORD_HASH must "
+            "be set together"
+        )
+    if environment == "production" and not (username and password_hash):
+        raise ConfigurationError(
+            "CHEILOSCAN_AUTH_USERNAME and CHEILOSCAN_AUTH_PASSWORD_HASH are "
+            "required when CHEILOSCAN_ENV=production"
+        )
+    # Production always requires HTTP Basic auth: the app holds
+    # biometric-adjacent research data and has no other access control.
+    auth_enabled = environment == "production" or bool(username)
+
+    behind_proxy = _get_bool(env, ENV_PREFIX + "BEHIND_PROXY", False)
+    trusted_proxy_count = _get_int(
+        env, ENV_PREFIX + "TRUSTED_PROXY_COUNT", 1
+    )
+    if not 1 <= trusted_proxy_count <= 5:
+        raise ConfigurationError(
+            "CHEILOSCAN_TRUSTED_PROXY_COUNT must be between 1 and 5"
+        )
+    force_https = _get_bool(env, ENV_PREFIX + "FORCE_HTTPS", False)
+    allowed_hosts = _get_hosts(env, ENV_PREFIX + "ALLOWED_HOSTS")
+    if force_https and not behind_proxy:
+        raise ConfigurationError(
+            "CHEILOSCAN_FORCE_HTTPS requires CHEILOSCAN_BEHIND_PROXY=1 because "
+            "TLS is terminated by a trusted reverse proxy"
+        )
+    if force_https and not allowed_hosts:
+        raise ConfigurationError(
+            "CHEILOSCAN_ALLOWED_HOSTS must be set when CHEILOSCAN_FORCE_HTTPS=1"
+        )
+    if environment == "production" and not (behind_proxy and force_https and allowed_hosts):
+        raise ConfigurationError(
+            "production requires CHEILOSCAN_BEHIND_PROXY=1, "
+            "CHEILOSCAN_FORCE_HTTPS=1 and CHEILOSCAN_ALLOWED_HOSTS: terminate "
+            "TLS at a trusted reverse proxy before exposing this service"
+        )
+
+    host = _get(env, ENV_PREFIX + "HOST", DEFAULT_HOST)
+    port = _get_int(env, ENV_PREFIX + "PORT", DEFAULT_PORT)
+    if not 1 <= port <= 65535:
+        raise ConfigurationError("CHEILOSCAN_PORT must be between 1 and 65535")
+    if environment == "development" and host not in {"127.0.0.1", "localhost", "::1"}:
+        raise ConfigurationError(
+            "DEBUG is enabled in development; CHEILOSCAN_HOST must be a "
+            "loopback address. Use CHEILOSCAN_ENV=production behind a proxy."
+        )
+    threads = _get_int(env, ENV_PREFIX + "THREADS", DEFAULT_THREADS)
+    if not 1 <= threads <= 4:
+        raise ConfigurationError(
+            "CHEILOSCAN_THREADS must be between 1 and 4 (single SQLite writer)"
+        )
+    auth_max_failures = _get_int(
+        env, ENV_PREFIX + "AUTH_MAX_FAILURES", DEFAULT_AUTH_MAX_FAILURES
+    )
+    auth_lockout_seconds = _get_int(
+        env, ENV_PREFIX + "AUTH_LOCKOUT_SECONDS", DEFAULT_AUTH_LOCKOUT_SECONDS
+    )
+    if not 1 <= auth_max_failures <= 100:
+        raise ConfigurationError("CHEILOSCAN_AUTH_MAX_FAILURES must be 1..100")
+    if not 1 <= auth_lockout_seconds <= 3600:
+        raise ConfigurationError("CHEILOSCAN_AUTH_LOCKOUT_SECONDS must be 1..3600")
 
     return {
         "SECRET_KEY": secret_key,
@@ -202,6 +345,7 @@ def load_config_from_env(
         "MAX_CONTENT_LENGTH": max_upload_mb * 1024 * 1024,
         "MIN_IMAGE_DIMENSION": min_dimension,
         "MAX_IMAGE_DIMENSION": max_dimension,
+        "MAX_IMAGE_PIXELS": max_pixels,
         "QUALITY_RECOMMENDED_MIN_DIMENSION": recommended,
         "QUALITY_MIN_BLUR_VARIANCE": min_blur,
         "QUALITY_MIN_BRIGHTNESS": min_brightness,
@@ -210,6 +354,16 @@ def load_config_from_env(
         "QUALITY_MAX_CLIPPED_FRACTION": max_clipped,
         "LOG_LEVEL": log_level,
         "LOG_FORMAT": log_format,
-        "HOST": _get(env, ENV_PREFIX + "HOST", "127.0.0.1"),
-        "PORT": _get_int(env, ENV_PREFIX + "PORT", 5000),
+        "HOST": host,
+        "PORT": port,
+        "THREADS": threads,
+        "AUTH_ENABLED": auth_enabled,
+        "AUTH_USERNAME": username,
+        "AUTH_PASSWORD_HASH": password_hash,
+        "AUTH_MAX_FAILURES": auth_max_failures,
+        "AUTH_LOCKOUT_SECONDS": auth_lockout_seconds,
+        "BEHIND_PROXY": behind_proxy,
+        "TRUSTED_PROXY_COUNT": trusted_proxy_count,
+        "FORCE_HTTPS": force_https,
+        "ALLOWED_HOSTS": allowed_hosts,
     }
