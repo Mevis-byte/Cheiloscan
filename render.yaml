@@ -1,0 +1,52 @@
+# Render Blueprint for CheiloScan.
+#
+# Deploy with: Render Dashboard -> New -> Blueprint -> connect
+# https://github.com/Mevis-byte/Cheiloscan and select this file.
+#
+# The service uses the repository Dockerfile (single Waitress process) and a
+# persistent disk for SQLite + image assets. Render terminates TLS and supplies
+# X-Forwarded-*; the app trusts exactly one proxy hop.
+services:
+  - type: web
+    name: cheiloscan
+    runtime: docker
+    region: oregon
+    plan: 1c-2g
+    numInstances: 1
+    autoDeployTrigger: commit
+    healthCheckPath: /api/health/live
+    disk:
+      name: cheiloscan-data
+      mountPath: /data
+      sizeGB: 10
+    envVars:
+      - key: CHEILOSCAN_ENV
+        value: production
+      - key: CHEILOSCAN_DATA_DIR
+        value: /data
+      - key: CHEILOSCAN_HOST
+        value: 0.0.0.0
+      # Render web services bind to PORT (default 10000). The app reads
+      # CHEILOSCAN_PORT, so set both the same value here.
+      - key: CHEILOSCAN_PORT
+        value: "10000"
+      - key: CHEILOSCAN_THREADS
+        value: "2"
+      - key: CHEILOSCAN_BEHIND_PROXY
+        value: "1"
+      - key: CHEILOSCAN_TRUSTED_PROXY_COUNT
+        value: "1"
+      - key: CHEILOSCAN_FORCE_HTTPS
+        value: "1"
+      - key: CHEILOSCAN_ALLOWED_HOSTS
+        sync: false
+      - key: CHEILOSCAN_SECRET_KEY
+        generateValue: true
+      - key: CHEILOSCAN_AUTH_USERNAME
+        sync: false
+      - key: CHEILOSCAN_AUTH_PASSWORD_HASH
+        sync: false
+      - key: CHEILOSCAN_LOG_LEVEL
+        value: INFO
+      - key: CHEILOSCAN_LOG_FORMAT
+        value: json

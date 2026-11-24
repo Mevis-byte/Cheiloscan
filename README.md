@@ -115,11 +115,37 @@ python -m app.security hash-password
 4. Verify: `https://<host>/api/health/live` returns `{"status":"ok"}` without
    credentials; protected pages prompt for Basic auth.
 
-The image installs dependencies from `uv.lock`, runs as a non-root user, stores
-data in the `cheiloscan-data` volume mounted at `/data`, and exposes a Docker
-healthcheck against the public liveness endpoint.
+The image installs dependencies from `uv.lock`, stores data in the
+`cheiloscan-data` volume mounted at `/data`, and exposes a Docker healthcheck
+against the public liveness endpoint. `docker-entrypoint.sh` fixes ownership of
+a newly mounted (root-owned) volume and then drops to the non-root
+`cheiloscan` user before starting Waitress.
 
-### 3.3 Bare metal / Windows service
+### 3.3 Render (Blueprint)
+
+`render.yaml` deploys the same Docker image with a persistent disk, one instance
+and Render's TLS proxy. The Blueprint uses a paid `1c-2g` plan because Render
+persistent disks are not available on the free plan.
+
+1. In Render, choose **New → Blueprint** and connect
+   `https://github.com/Mevis-byte/Cheiloscan`.
+2. During Blueprint creation, supply the three `sync: false` variables:
+   - `CHEILOSCAN_ALLOWED_HOSTS` — your Render hostname (for example
+     `cheiloscan.onrender.com`) and any custom domain, comma-separated, **no
+     scheme**.
+   - `CHEILOSCAN_AUTH_USERNAME` — the Basic-auth user.
+   - `CHEILOSCAN_AUTH_PASSWORD_HASH` — generate with
+     `python -m app.security hash-password`.
+   `CHEILOSCAN_SECRET_KEY` is generated automatically by Render.
+3. Deploy. Render listens on port `10000` and checks `/api/health/live`, which
+   is public and bypasses Host/TLS checks.
+4. Verify protected pages prompt for Basic auth and that
+   `https://<your-host>/api/health/ready` returns database/storage status.
+
+Do **not** add a second instance: the SQLite/WAL data directory on the disk
+supports one writer process only.
+
+### 3.4 Bare metal / Windows service
 
 ```bash
 uv sync --frozen --no-dev
@@ -135,7 +161,7 @@ For Windows, run `serve.py` under a service manager (for example NSSM or Task
 Scheduler) and terminate TLS at a proxy on the same host. Do not use `run.py`
 in production — it starts the Werkzeug development server.
 
-### 3.4 Health checks
+### 3.5 Health checks
 
 | Endpoint | Auth | Purpose |
 |---|---|---|
@@ -147,7 +173,7 @@ Only `/api/health/live` bypasses host and HTTPS checks; everything else still
 requires the configured public `Host` and a proxy-supplied HTTPS request in
 production.
 
-### 3.5 Backups
+### 3.6 Backups
 
 The data directory contains the SQLite database and both image stores. Never
 copy only `app.sqlite` while the app is running: WAL contents may still be

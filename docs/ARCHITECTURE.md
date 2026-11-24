@@ -425,9 +425,10 @@ sqlalchemy==2.1.8       reportlab==5.1.0      pytest==9.2.0
 ## 10. Production deployment (implemented v0.1)
 
 `README.md` is the operator guide. Artifacts: `Dockerfile`, `docker-compose.yml`,
-`.dockerignore`, `serve.py` (Waitress, one process), `wsgi.py` (single-worker
-WSGI import), `deploy/nginx.conf.example` (TLS termination and header rewriting)
-and `.github/workflows/ci.yml`. Waitress is configured to preserve
+`render.yaml` (Render Blueprint with persistent disk), `.dockerignore`, `serve.py`
+(Waitress, one process), `wsgi.py` (single-worker WSGI import),
+`deploy/nginx.conf.example` (TLS termination and header rewriting) and
+`.github/workflows/ci.yml`. Waitress is configured to preserve
 `X-Forwarded-*` for the app's `ProxyFix`; therefore its listening port must be
 reachable only from the trusted proxy.
 

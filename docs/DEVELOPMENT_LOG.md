@@ -253,3 +253,20 @@ This fixes only the interpreter-selection failure. It does **not** make the
 application serverless-ready: the persistent SQLite database, on-disk asset
 store, single-process write lock, synchronous preprocessing and in-process
 auth throttle still require a long-running host with a mounted volume.
+
+---
+
+## 2026-11-24 (follow-up) — Render Blueprint
+
+Added `render.yaml` so the existing Docker image can be deployed to Render as a
+single web service: rendered TLS proxy → Waitress on `CHEILOSCAN_PORT=10000`,
+one instance, a paid `1c-2g` plan (persistent disks are unavailable on Render's
+free plan) and a 10 GB disk mounted at `/data`. Render generates
+`CHEILOSCAN_SECRET_KEY`; the allowed-host list, Basic-auth username and Werkzeug
+password hash are prompted as `sync: false` values. `healthCheckPath` points to
+the public `/api/health/live` endpoint. README §3.3 documents the deploy steps.
+
+Because Render mounts persistent disks root-owned, `docker-entrypoint.sh` was
+added: it starts as root only to `chown /data`, then drops to uid/gid 10001 and
+execs `serve.py`. The Dockerfile healthcheck now reads `CHEILOSCAN_PORT` so it
+also works with Render's port 10000. No application Python code changed.

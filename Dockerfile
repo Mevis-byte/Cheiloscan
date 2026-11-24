@@ -20,19 +20,22 @@ RUN pip install --no-cache-dir uv==0.11.26 \
 COPY app ./app
 COPY cheiloscan ./cheiloscan
 COPY web ./web
-COPY wsgi.py serve.py ./
+COPY wsgi.py serve.py docker-entrypoint.sh ./
 
 RUN pip install --no-cache-dir --no-deps . \
     && groupadd --gid 10001 cheiloscan \
     && useradd --uid 10001 --gid 10001 --create-home cheiloscan \
+    && chmod +x docker-entrypoint.sh \
     && mkdir -p /data \
     && chown -R cheiloscan:cheiloscan /data /app
 
 VOLUME ["/data"]
-USER 10001:10001
+# Start as root only long enough to fix ownership of a mounted volume;
+# docker-entrypoint.sh drops to uid/gid 10001 before running the app.
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health/live', timeout=3).status == 200 else 1)"]
+    CMD python -c "import os, urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('CHEILOSCAN_PORT', '8000') + '/api/health/live', timeout=3).status == 200 else 1)"
 
+ENTRYPOINT ["./docker-entrypoint.sh"]
 CMD ["python", "serve.py"]
