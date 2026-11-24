@@ -30,7 +30,10 @@ pipeline with fully provenanced, immutable artifacts.
 
 ## 2. Development quickstart
 
-Requires Python 3.11 and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.12 (pinned in `.python-version`; `pyproject.toml` still
+permits 3.11+) and [uv](https://docs.astral.sh/uv/). Vercel's Python runtime
+supports 3.12–3.14 only, so pinning 3.11 makes its `uv sync --active` build fail
+with "No interpreter found for Python 3.11".
 
 ```bash
 uv sync

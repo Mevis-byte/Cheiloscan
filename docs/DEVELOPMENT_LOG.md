@@ -231,3 +231,25 @@ phases. The baseline was **222 passing tests**; the hardened tree has **241**.
   storage export and golden-file regression tests remain open work.
 - Multi-process WSGI workers against one SQLite/WAL data directory remain
   explicitly unsupported; scaling requires a different database.
+
+---
+
+## 2026-11-24 (follow-up) — Deployment interpreter pin
+
+A Vercel build failed with `No interpreter found for Python 3.11 in managed
+installations or search path`. Vercel's Python runtime supports only 3.12, 3.13
+and 3.14 (3.12 is the default); the repo's `.python-version` pinned 3.11, so its
+`uv sync --active --frozen --no-editable` tried to manage a download that the
+bundled uv could not provide.
+
+- Changed `.python-version` from `3.11` to `3.12`. `pyproject.toml` still
+  declares `requires-python = ">=3.11"` and the committed `uv.lock` contains
+  resolution markers for both `<3.12` and `>=3.12`, so no relock was needed.
+- Aligned `.github/workflows/ci.yml` and `Dockerfile` to Python 3.12 so every
+  build path uses the same interpreter.
+- Re-verified on CPython 3.12.13: `uv lock --check` clean and **241 tests passed**.
+
+This fixes only the interpreter-selection failure. It does **not** make the
+application serverless-ready: the persistent SQLite database, on-disk asset
+store, single-process write lock, synchronous preprocessing and in-process
+auth throttle still require a long-running host with a mounted volume.
