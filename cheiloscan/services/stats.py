@@ -51,8 +51,17 @@ def _count_by_status(session: Session, model) -> tuple[int, dict[str, int]]:
     return sum(by_status.values()), by_status
 
 
-def collect_dashboard_stats(session: Session, data_dir: Path) -> DashboardStats:
-    """Compute real database counts and storage usage for the dashboard."""
+def collect_dashboard_stats(
+    session: Session,
+    data_dir: Path | None = None,
+    *,
+    storage_bytes: int | None = None,
+) -> DashboardStats:
+    """Compute real database counts and storage usage for the dashboard.
+
+    ``storage_bytes`` comes from the configured store on serverless backends;
+    the local filesystem is used only as a fallback for direct callers/tests.
+    """
     samples_total = int(
         session.scalar(select(func.count()).select_from(Sample)) or 0
     )
@@ -79,7 +88,13 @@ def collect_dashboard_stats(session: Session, data_dir: Path) -> DashboardStats:
         analyses_by_status=analyses_by_status,
         comparisons_total=comparisons_total,
         comparisons_by_status=comparisons_by_status,
-        storage_bytes=storage_usage_bytes(Path(data_dir)),
+        storage_bytes=(
+            int(storage_bytes)
+            if storage_bytes is not None
+            else storage_usage_bytes(Path(data_dir))
+            if data_dir is not None
+            else 0
+        ),
         schema_version=SCHEMA_VERSION,
         generated_at=utc_now(),
     )

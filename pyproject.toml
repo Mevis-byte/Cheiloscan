@@ -18,12 +18,21 @@ dependencies = [
     "pillow>=10.0",
     # Production WSGI server (cross-platform, single process).
     "waitress>=3.0,<4",
+    # Serverless deployment (Neon/Postgres + Vercel Blob).
+    "psycopg[binary]>=3.1,<4",
+    "vercel-blob>=0.6,<1",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8,<10",
 ]
+
+[tool.vercel]
+entrypoint = "wsgi:app"
+
+[tool.vercel.scripts]
+build = "python scripts/sync_public.py"
 
 [tool.setuptools.packages.find]
 include = ["app*", "cheiloscan*", "web*"]

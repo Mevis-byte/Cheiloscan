@@ -4,7 +4,8 @@ The application schema is versioned by the single-row ``schema_version``
 table. ``Database.init_schema`` creates any missing tables and then applies
 every migration between the stored version and ``SCHEMA_VERSION`` in order.
 
-Migration rules (SQLite constraints, see docs/ARCHITECTURE.md §6):
+Migration rules (portable across SQLite and Postgres, see
+docs/ARCHITECTURE.md §6):
 
 - New tables are created with ``create_all`` semantics, so they need no
   explicit migration for a fresh database. An existing database gets them
@@ -33,11 +34,14 @@ def _table_exists(connection: Connection, table: str) -> bool:
     return table in inspect(connection).get_table_names()
 
 
-def _column_exists(connection: Connection, table: str, column: str) -> bool:
+def _column_exists(connection: Connection, table: str, column_name: str) -> bool:
+    """Portable column check (SQLAlchemy inspector works on SQLite and Postgres)."""
     if not _table_exists(connection, table):
         return False
-    rows = connection.execute(text(f"PRAGMA table_info({table})")).fetchall()
-    return any(row[1] == column for row in rows)
+    return any(
+        column["name"] == column_name
+        for column in inspect(connection).get_columns(table)
+    )
 
 
 def _v1_to_v2(connection: Connection) -> None:

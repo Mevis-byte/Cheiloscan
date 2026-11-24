@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CheiloScan — Analyses</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-page="analyses">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">CheiloScan</span>
+        <span class="brand-sub">lip-print research</span>
+      </div>
+      <nav class="nav">
+        <a href="/">Dashboard</a>
+        <a href="/samples">Samples</a>
+        <a href="/analyses" class="active">Analyses</a>
+        <a href="/comparisons">Comparisons</a>
+      </nav>
+      <div class="sidebar-note">
+        Experimental research tool. Outputs are descriptive measurements,
+        not biometric identification conclusions.
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="header">
+        <h1>Analyses</h1>
+        <span class="badge badge-experimental">experimental</span>
+      </header>
+
+      <main class="content">
+        <div id="load-error" class="alert alert-error hidden" role="alert"></div>
+
+        <section class="panel">
+          <table class="data-table" id="analyses-table">
+            <thead>
+              <tr>
+                <th>Sample</th>
+                <th>Status</th>
+                <th>Pipeline</th>
+                <th>Artifacts</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="analyses-tbody"></tbody>
+          </table>
+
+          <div id="empty-state" class="empty-state hidden">
+            <div class="empty-state-title">No analysis runs yet</div>
+            <p>
+              Open a sample and press <strong>Process</strong> to run the
+              preprocessing pipeline. Only real runs appear here; nothing is
+              simulated.
+            </p>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        CheiloScan — local-first research application · not a validated
+        biometric identification system
+      </footer>
+    </div>
+  </div>
+  <script src="/js/app.js"></script>
+</body>
+</html>

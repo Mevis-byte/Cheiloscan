@@ -355,20 +355,21 @@ Quality thresholds produce warnings only and never reject an image.
 | OpenCV variant | `opencv-python-headless` | Server app never uses `cv2.imshow`; headless avoids libGL/libgthread runtime deps in minimal environments | non-headless `opencv-python` (would work here — libGL present — but headless is portable) |
 | Numerics | NumPy 2.x + SciPy | Required by all CV/ML libs; all pinned versions verified numpy-2-compatible | numpy<2 legacy pins (unneeded) |
 | ML utilities | scikit-learn | PCA/descriptive exploration of feature space; optional future supervised experiments **only if a real dataset is supplied** — never trained on synthetic data | deep learning stack (torch/tf: heavy, unjustified) |
-| Persistence | SQLite + SQLAlchemy 2.x (typed ORM) | Local-first, zero admin, WAL suffices for single writer; ORM keeps schema in code | Postgres (violates local-first simplicity), raw SQL (maintenance cost) |
+| Persistence | SQLite locally, Postgres on Vercel; SQLAlchemy 2.x typed ORM for both | Local-first default with zero admin; serverless uses durable Neon/Postgres. One ORM/schema definition stays in code | raw SQL (maintenance cost); SQLite on Vercel (ephemeral filesystem) |
 | Asset integrity | SHA-256 content addressing | Dedup, tamper detection, immutability enforcement for free | sequential filenames |
 | Reports | ReportLab | Pure-Python PDF, no external binaries/LaTeX | wkhtmltopdf/weasyprint (system deps, heavier) |
 | Frontend | Vanilla HTML/CSS/JS served by Flask | Offline-capable, no npm/build pipeline, no CDN | React/Vite (toolchain overhead for a research UI) |
-| Env/packaging | `uv` + venv (Python 3.11) + `pyproject.toml` | PEP 668 forbids system installs on this Kali host; 3.11 has the broadest wheel coverage; uv is installed and fast | system pip (`--break-system-packages` is prohibited) |
+| Env/packaging | `uv` + venv (Python 3.12) + `pyproject.toml` | PEP 668 forbids system installs on this Kali host; 3.12 is supported by Vercel and has broad wheel coverage; uv is installed and fast | system pip (`--break-system-packages` is prohibited); Python 3.11 (not available in Vercel's managed runtimes) |
 | Testing | pytest 9.x | Already available; markers for unit/integration/regression | unittest (less ergonomic) |
 
-**Verified dependency set** (resolved at wheel level for Python 3.11 and 3.14 on
-2026-11-11; see `DEVELOPMENT_LOG.md`):
+**Verified dependency set** (resolved at wheel level for Python 3.12 and 3.14 on
+2026-11-24; see `DEVELOPMENT_LOG.md`):
 
 ```
 flask==3.1.3            numpy==2.4.6          scipy==1.17.1
 opencv-python-headless  scikit-image==0.26.0   scikit-learn==1.9.1
 sqlalchemy==2.1.8       reportlab==5.1.0      pytest==9.2.0
+psycopg[binary]==3.3.9  vercel-blob==0.6.2
 (pillow, werkzeug, jinja2, click, … as transitive dependencies)
 ```
 
@@ -424,20 +425,28 @@ sqlalchemy==2.1.8       reportlab==5.1.0      pytest==9.2.0
 
 ## 10. Production deployment (implemented v0.1)
 
-`README.md` is the operator guide. Artifacts: `Dockerfile`, `docker-compose.yml`,
-`render.yaml` (Render Blueprint with persistent disk), `.dockerignore`, `serve.py`
-(Waitress, one process), `wsgi.py` (single-worker WSGI import),
+`README.md` is the operator guide. Local/container artifacts: `Dockerfile`,
+`docker-compose.yml`, `render.yaml` (Render Blueprint with persistent disk),
+`.dockerignore`, `serve.py` (Waitress, one process), `wsgi.py` (WSGI import),
 `deploy/nginx.conf.example` (TLS termination and header rewriting) and
 `.github/workflows/ci.yml`. Waitress is configured to preserve
 `X-Forwarded-*` for the app's `ProxyFix`; therefore its listening port must be
 reachable only from the trusted proxy.
 
+Serverless artifacts: `vercel.json` (function timeout and bundle exclusions),
+`.vercelignore`, `public/` (CDN mirror of `web/`), `scripts/sync_public.py`
+(build-time mirror) and `pyproject.toml` (`tool.vercel.entrypoint = "wsgi:app"`).
+The Vercel profile swaps SQLite/filesystem for Postgres + Vercel Blob behind
+the `AssetStoreLike` contract; the domain package has no Flask or SDK-specific
+HTTP logic.
+
 Production starts only with a secret key, Basic-auth credentials, a trusted
 proxy hop, HTTPS enforcement and an allowed-host list. `/api/health/live` is
 public and bypasses Host/TLS checks for internal probes; `/api/health/ready`
-and `/api/health` require credentials. Back up the
+and `/api/health` require credentials. For local deployments, back up the
 database with `sqlite3.Connection.backup()` together with the original/derived
-stores — never copy only the WAL-backed database file while running.
+stores — never copy only the WAL-backed database file while running. For
+Vercel, use Postgres snapshots and version the Blob prefix.
 
 ---
 

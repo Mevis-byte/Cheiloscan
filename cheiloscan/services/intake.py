@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from ..db.models import ImageAsset, Sample, utc_now
 from ..db.repositories import ImageAssetRepository, SampleRepository
 from ..imaging.quality import QualityReport, QualityThresholds, assess_quality
-from ..storage.asset_store import AssetStore
+from ..storage.base import AssetStoreLike
 from ..util.imageio import (
     DecodedImage,
     ImageDecodeError,
@@ -147,7 +147,7 @@ def _check_dimensions(width: int, height: int, config: IntakeConfig) -> None:
 
 def intake_image(
     session: Session,
-    store: AssetStore,
+    store: AssetStoreLike,
     data: bytes,
     *,
     filename: str | None = None,

@@ -165,7 +165,9 @@ class ImageAsset(TimestampMixin, Base):
             "uq_original_assets_sha256",
             "sha256",
             unique=True,
+            # Keep the partial uniqueness invariant on both supported engines.
             sqlite_where=text("kind = 'original'"),
+            postgresql_where=text("kind = 'original'"),
         ),
     )
 

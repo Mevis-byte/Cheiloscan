@@ -4,6 +4,10 @@ Environment-driven configuration with fail-fast validation. The canonical
 variable names are documented in ``.env.example``. Values are read from the
 process environment (``run.py`` loads ``.env`` via python-dotenv before the
 application factory is called).
+
+When Vercel is detected (``VERCEL=1`` or ``VERCEL_ENV``), production mode,
+trusted-proxy TLS handling, Postgres and Vercel Blob become the defaults so a
+correctly provisioned Vercel project works without extra flags.
 """
 
 from __future__ import annotations
@@ -18,11 +22,16 @@ ENV_PREFIX = "CHEILOSCAN_"
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 VALID_LOG_FORMATS = {"json", "plain"}
 VALID_ENVIRONMENTS = {"development", "production"}
+VALID_STORAGE_BACKENDS = {"local", "vercel_blob"}
+VALID_BLOB_ACCESS = {"public", "private"}
 TRUE_VALUES = {"1", "true", "yes", "on"}
 FALSE_VALUES = {"0", "false", "no", "off"}
 
 DEFAULT_DATA_DIR = "data"
 DEFAULT_MAX_UPLOAD_MB = 25
+# Vercel Functions accept 4.5 MB request bodies by default; stay just below it
+# so our own 413 is deterministic instead of the platform's opaque error.
+VERCEL_DEFAULT_MAX_UPLOAD_MB = 4
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5000
 DEFAULT_THREADS = 2
@@ -56,6 +65,9 @@ CONFIG_KEYS = (
     "PROPAGATE_EXCEPTIONS",
     "DATA_DIR",
     "DATABASE_URL",
+    "STORAGE_BACKEND",
+    "STORAGE_PREFIX",
+    "BLOB_ACCESS",
     "MAX_CONTENT_LENGTH",
     "LOG_LEVEL",
     "LOG_FORMAT",
@@ -134,6 +146,41 @@ def _get_hosts(env: Mapping[str, str], name: str) -> tuple[str, ...]:
     return hosts
 
 
+def is_vercel(env: Mapping[str, str]) -> bool:
+    """Return whether configuration is being loaded inside Vercel Functions."""
+    return _get(env, "VERCEL").lower() in TRUE_VALUES or bool(_get(env, "VERCEL_ENV"))
+
+
+def vercel_hosts(env: Mapping[str, str]) -> tuple[str, ...]:
+    """Hosts Vercel advertises for the current project/deployment."""
+    hosts: list[str] = []
+    for name in (
+        "VERCEL_PROJECT_PRODUCTION_URL",
+        "VERCEL_BRANCH_URL",
+        "VERCEL_URL",
+    ):
+        raw = _get(env, name).strip()
+        if not raw:
+            continue
+        host = raw.split("://", 1)[-1].split("/", 1)[0].strip().lower()
+        if host and all(not character.isspace() for character in host):
+            hosts.append(host)
+    return tuple(dict.fromkeys(hosts))
+
+
+def normalize_database_url(url: str) -> str:
+    """Use psycopg explicitly for generic Postgres URLs.
+
+    SQLAlchemy's default ``postgresql://`` driver is psycopg2, which is not in
+    the dependency set. Neon and Vercel Marketplace hand out generic URLs, so
+    normalizing here prevents a driver-not-installed error at cold start.
+    """
+    for legacy in ("postgresql://", "postgres://"):
+        if url.startswith(legacy):
+            return "postgresql+psycopg://" + url[len(legacy) :]
+    return url
+
+
 def default_database_url(data_dir: Path) -> str:
     """SQLite URL for ``<data_dir>/db/app.sqlite`` (absolute, POSIX form)."""
     return "sqlite:///" + (data_dir / "db" / "app.sqlite").as_posix()
@@ -146,7 +193,10 @@ def load_config_from_env(
     if env is None:
         env = os.environ
 
-    environment = _get(env, ENV_PREFIX + "ENV", "development").lower()
+    on_vercel = is_vercel(env)
+    environment = _get(
+        env, ENV_PREFIX + "ENV", "production" if on_vercel else "development"
+    ).lower()
     if environment not in VALID_ENVIRONMENTS:
         raise ConfigurationError(
             f"CHEILOSCAN_ENV must be one of {sorted(VALID_ENVIRONMENTS)}, "
@@ -167,7 +217,12 @@ def load_config_from_env(
             f"got {log_format!r}"
         )
 
-    max_upload_mb = _get_int(env, ENV_PREFIX + "MAX_UPLOAD_MB", DEFAULT_MAX_UPLOAD_MB)
+    default_upload_mb = (
+        VERCEL_DEFAULT_MAX_UPLOAD_MB if on_vercel else DEFAULT_MAX_UPLOAD_MB
+    )
+    max_upload_mb = _get_int(
+        env, ENV_PREFIX + "MAX_UPLOAD_MB", default_upload_mb
+    )
     if not 1 <= max_upload_mb <= MAX_UPLOAD_MB:
         raise ConfigurationError(
             f"CHEILOSCAN_MAX_UPLOAD_MB must be between 1 and {MAX_UPLOAD_MB}, "
@@ -243,9 +298,55 @@ def load_config_from_env(
         _get(env, ENV_PREFIX + "DATA_DIR", DEFAULT_DATA_DIR)
     ).expanduser().resolve()
 
-    database_url = _get(env, ENV_PREFIX + "DATABASE_URL") or default_database_url(
-        data_dir
+    database_url = normalize_database_url(
+        _get(env, ENV_PREFIX + "DATABASE_URL") or default_database_url(data_dir)
     )
+    if on_vercel and not database_url.startswith("postgresql+psycopg://"):
+        raise ConfigurationError(
+            "Vercel deployments require CHEILOSCAN_DATABASE_URL with a "
+            "persistent Postgres/Neon connection string; SQLite cannot persist "
+            "on Vercel's ephemeral filesystem"
+        )
+
+    storage_backend = _get(
+        env,
+        ENV_PREFIX + "STORAGE_BACKEND",
+        "vercel_blob" if on_vercel else "local",
+    ).lower()
+    if storage_backend not in VALID_STORAGE_BACKENDS:
+        raise ConfigurationError(
+            f"CHEILOSCAN_STORAGE_BACKEND must be one of "
+            f"{sorted(VALID_STORAGE_BACKENDS)}, got {storage_backend!r}"
+        )
+    storage_prefix = _get(env, ENV_PREFIX + "STORAGE_PREFIX", "cheiloscan")
+    storage_prefix = storage_prefix.strip("/")
+    if (
+        "\\" in storage_prefix
+        or ".." in storage_prefix.split("/")
+        or not re.fullmatch(r"[A-Za-z0-9._/-]{1,200}", storage_prefix)
+    ):
+        raise ConfigurationError(
+            "CHEILOSCAN_STORAGE_PREFIX must be a safe object-key prefix "
+            "(letters, digits, '.', '_', '-' and '/' only)"
+        )
+    blob_access = _get(env, ENV_PREFIX + "BLOB_ACCESS", "private").lower()
+    if blob_access not in VALID_BLOB_ACCESS:
+        raise ConfigurationError(
+            f"CHEILOSCAN_BLOB_ACCESS must be one of {sorted(VALID_BLOB_ACCESS)}, "
+            f"got {blob_access!r}"
+        )
+    if storage_backend == "vercel_blob" and not any(
+        _get(env, name)
+        for name in (
+            "BLOB_READ_WRITE_TOKEN",
+            "VERCEL_BLOB_READ_WRITE_TOKEN",
+            "BLOB_STORE_ID",
+        )
+    ):
+        raise ConfigurationError(
+            "Vercel Blob storage requires BLOB_READ_WRITE_TOKEN (or "
+            "BLOB_STORE_ID with Vercel OIDC) to be set"
+        )
 
     secret_key = _get(env, ENV_PREFIX + "SECRET_KEY")
     if environment == "production" and not secret_key:
@@ -283,7 +384,7 @@ def load_config_from_env(
     # biometric-adjacent research data and has no other access control.
     auth_enabled = environment == "production" or bool(username)
 
-    behind_proxy = _get_bool(env, ENV_PREFIX + "BEHIND_PROXY", False)
+    behind_proxy = _get_bool(env, ENV_PREFIX + "BEHIND_PROXY", on_vercel)
     trusted_proxy_count = _get_int(
         env, ENV_PREFIX + "TRUSTED_PROXY_COUNT", 1
     )
@@ -291,8 +392,13 @@ def load_config_from_env(
         raise ConfigurationError(
             "CHEILOSCAN_TRUSTED_PROXY_COUNT must be between 1 and 5"
         )
-    force_https = _get_bool(env, ENV_PREFIX + "FORCE_HTTPS", False)
+    force_https = _get_bool(env, ENV_PREFIX + "FORCE_HTTPS", on_vercel)
     allowed_hosts = _get_hosts(env, ENV_PREFIX + "ALLOWED_HOSTS")
+    if on_vercel and not allowed_hosts:
+        # Derive the deployment host(s) so a fresh Vercel project works before
+        # a custom domain is configured. Custom domains must still be listed
+        # explicitly in CHEILOSCAN_ALLOWED_HOSTS.
+        allowed_hosts = vercel_hosts(env)
     if force_https and not behind_proxy:
         raise ConfigurationError(
             "CHEILOSCAN_FORCE_HTTPS requires CHEILOSCAN_BEHIND_PROXY=1 because "
@@ -342,6 +448,9 @@ def load_config_from_env(
         "PROPAGATE_EXCEPTIONS": False,
         "DATA_DIR": str(data_dir),
         "DATABASE_URL": database_url,
+        "STORAGE_BACKEND": storage_backend,
+        "STORAGE_PREFIX": storage_prefix,
+        "BLOB_ACCESS": blob_access,
         "MAX_CONTENT_LENGTH": max_upload_mb * 1024 * 1024,
         "MIN_IMAGE_DIMENSION": min_dimension,
         "MAX_IMAGE_DIMENSION": max_dimension,

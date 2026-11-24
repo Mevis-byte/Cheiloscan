@@ -18,7 +18,6 @@ Everything stored is measured. No placeholder scores, no invented metrics.
 
 from __future__ import annotations
 
-import shutil
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -39,7 +38,7 @@ from ..imaging.pipeline import (
 )
 from ..imaging.quality import QualityThresholds
 from ..imaging.preprocess import PreprocessingError
-from ..storage.asset_store import AssetStore, StorageError, StoredFile
+from ..storage.base import AssetStoreLike, StorageError, StoredFile
 from ..util.imageio import (
     ImageDecodeError,
     UnsupportedFormatError,
@@ -81,7 +80,7 @@ def get_analysis(session: Session, analysis_id: str) -> AnalysisRun:
 
 def process_sample(
     session: Session,
-    store: AssetStore,
+    store: AssetStoreLike,
     sample_id: str,
     params_payload: dict[str, Any] | None = None,
     *,
@@ -246,14 +245,12 @@ def _record_failed_run(
     return run
 
 
-def _remove_derived_run(store: AssetStore, run_id: str) -> None:
+def _remove_derived_run(store: AssetStoreLike, run_id: str) -> None:
     """Remove stage files written before a failed run is finalized."""
     try:
-        directory = store.resolve(f"derived/{run_id}")
+        store.delete_derived_run(run_id)
     except StorageError:  # pragma: no cover - generated ids are always safe
         return
-    if directory.is_dir():
-        shutil.rmtree(directory, ignore_errors=True)
 
 
 def _encode_stages(

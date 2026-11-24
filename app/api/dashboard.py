@@ -6,11 +6,9 @@ cheiloscan/services/stats.py). With no data, counts are honestly zero.
 
 from __future__ import annotations
 
-from pathlib import Path
+from flask import Blueprint, jsonify
 
-from flask import Blueprint, current_app, jsonify
-
-from ..extensions import get_database
+from ..extensions import get_asset_store, get_database
 from ..api.serializers import _iso_utc
 from cheiloscan.services.stats import collect_dashboard_stats
 
@@ -20,9 +18,11 @@ dashboard_bp = Blueprint("dashboard", __name__, url_prefix="/api/dashboard")
 @dashboard_bp.get("/stats")
 def stats():
     database = get_database()
-    data_dir = Path(current_app.config["DATA_DIR"])
+    storage_bytes = int(
+        get_asset_store().describe().get("bytes_used", 0) or 0
+    )
     with database.session() as session:
-        stats = collect_dashboard_stats(session, data_dir)
+        stats = collect_dashboard_stats(session, storage_bytes=storage_bytes)
     return jsonify(
         {
             "samples": {

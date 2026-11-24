@@ -249,10 +249,10 @@ bundled uv could not provide.
   build path uses the same interpreter.
 - Re-verified on CPython 3.12.13: `uv lock --check` clean and **241 tests passed**.
 
-This fixes only the interpreter-selection failure. It does **not** make the
-application serverless-ready: the persistent SQLite database, on-disk asset
-store, single-process write lock, synchronous preprocessing and in-process
-auth throttle still require a long-running host with a mounted volume.
+This fixed only the interpreter-selection failure. The persistence and
+filesystem blockers described here were addressed later in the same day by the
+Vercel serverless profile below; the in-process auth throttle remains a known
+per-instance limitation.
 
 ---
 
@@ -270,3 +270,33 @@ Because Render mounts persistent disks root-owned, `docker-entrypoint.sh` was
 added: it starts as root only to `chown /data`, then drops to uid/gid 10001 and
 execs `serve.py`. The Dockerfile healthcheck now reads `CHEILOSCAN_PORT` so it
 also works with Render's port 10000. No application Python code changed.
+
+---
+
+## 2026-11-24 (follow-up) — Vercel serverless profile
+
+Vercel deployment is now supported without rewriting the application:
+
+- `app/config.py` detects `VERCEL=1`/`VERCEL_ENV` and defaults to production,
+  trusted-proxy HTTPS, Postgres and Vercel Blob. Vercel's advertised host is
+  used as a fallback `ALLOWED_HOSTS`; custom domains must be listed explicitly.
+  Generic `postgresql://` URLs are normalized to `postgresql+psycopg://`.
+  Uploads default to 4 MB to stay below the platform's 4.5 MB body limit.
+- `Database` uses `NullPool` for Postgres and serializes cold-start DDL with a
+  transaction-scoped advisory lock. Migrations use SQLAlchemy's inspector
+  instead of `PRAGMA table_info`, and the original-asset partial unique index
+  now carries both `sqlite_where` and `postgresql_where`.
+- Asset storage gained the backend-neutral `AssetStoreLike` contract. The local
+  `AssetStore` is unchanged in behavior; `VercelBlobAssetStore` implements the
+  same content-addressed keys with private-by-default objects. Cleanup, health,
+  dashboard usage and asset serving now go through contract methods.
+- `/api/assets/<id>/file` streams bytes so large images are not subject to
+  Vercel's buffered response-body limit.
+- Added `vercel.json` (`wsgi.py` function, 300-second maximum), `.vercelignore`,
+  a `public/` mirror of `web/` and `scripts/sync_public.py` as the build command.
+  `pyproject.toml` sets `tool.vercel.entrypoint = "wsgi:app"`.
+- Added `psycopg[binary]` and `vercel-blob` dependencies.
+
+Known limitation: the failed-login throttle is an in-process dictionary, so on
+Vercel it is per function instance rather than global. Local-first research
+posture and the no-identity/accuracy-claims policy are unchanged.

@@ -69,11 +69,16 @@ should use real environment variables or container secrets instead.
 
 ### 3.1 Requirements
 
-- One trusted TLS-terminating reverse proxy (nginx/Traefik/Caddy) in front of
-  the application. Basic credentials must never cross an unencrypted network.
-- A persistent volume for `CHEILOSCAN_DATA_DIR` (SQLite database + image store).
-- A single application process. SQLite/WAL supports one writer; horizontal
-  scaling is not supported by this release.
+There are two supported deployment profiles:
+
+- **Local / container (default):** one trusted TLS-terminating reverse proxy,
+  a persistent volume for `CHEILOSCAN_DATA_DIR` (SQLite + image store), and one
+  application process. SQLite/WAL supports one writer.
+- **Vercel (serverless):** a persistent Postgres/Neon database and Vercel Blob
+  replace the local disk. Vercel terminates TLS and supplies the trusted
+  proxy headers; no long-running local process is required.
+
+Basic credentials must never cross an unencrypted network in either profile.
 
 Production startup **fails fast** unless all of the following are set:
 
@@ -145,7 +150,42 @@ persistent disks are not available on the free plan.
 Do **not** add a second instance: the SQLite/WAL data directory on the disk
 supports one writer process only.
 
-### 3.4 Bare metal / Windows service
+### 3.4 Vercel (serverless)
+
+Vercel is supported with durable external services. `vercel.json` points the
+Python runtime at `wsgi:app`, `public/` holds the static UI, and `render.yaml`
+is ignored by Vercel. The application detects `VERCEL=1` and automatically uses
+production settings, trusted-proxy HTTPS handling, Postgres and Vercel Blob.
+
+1. Create a Vercel project from `https://github.com/Mevis-byte/Cheiloscan`
+   (`main`). Framework preset **Flask**, Python `3.12`.
+2. Add a **Neon Postgres** integration (or any Postgres URL) and set:
+   - `CHEILOSCAN_DATABASE_URL` — the pooled connection string. Generic
+     `postgresql://` URLs are normalized to the installed `psycopg` driver.
+   - `BLOB_READ_WRITE_TOKEN` — from a Vercel Blob store in the same project.
+   - `CHEILOSCAN_SECRET_KEY` — ≥32 random characters.
+   - `CHEILOSCAN_AUTH_USERNAME` and `CHEILOSCAN_AUTH_PASSWORD_HASH`.
+   - `CHEILOSCAN_ALLOWED_HOSTS` — your `*.vercel.app` host and custom domain,
+     comma-separated, no scheme. These default to Vercel's advertised hosts if
+     omitted, but list custom domains explicitly.
+3. Optional: `CHEILOSCAN_BLOB_ACCESS=private` (default) or `public`;
+   `CHEILOSCAN_STORAGE_PREFIX` to isolate environments.
+4. Deploy. The Build Command runs `scripts/sync_public.py` from
+   `[tool.vercel.scripts]`, so `public/` always matches `web/`.
+5. Verify `/api/health/live` (public) and `/api/health/ready` (Basic auth).
+   Uploads are limited to **4 MB** by default because Vercel Functions accept
+   4.5 MB request bodies. To raise it, enable Vercel's 20 MiB large-body beta
+   and set `CHEILOSCAN_MAX_UPLOAD_MB=20`.
+
+The schema is initialized under a Postgres advisory lock at cold start, so
+concurrent function instances cannot race migrations. Database connections use
+`NullPool` (fresh connection per unit of work). Asset bytes are streamed, so
+image responses are not subject to Vercel's buffered 4.5 MB response limit.
+The in-process failed-login throttle is per function instance, not global;
+put a platform-level rate limiter in front if that matters for your threat
+model. Daily snapshots are still your responsibility — see §3.7.
+
+### 3.5 Bare metal / Windows service
 
 ```bash
 uv sync --frozen --no-dev
@@ -161,7 +201,7 @@ For Windows, run `serve.py` under a service manager (for example NSSM or Task
 Scheduler) and terminate TLS at a proxy on the same host. Do not use `run.py`
 in production — it starts the Werkzeug development server.
 
-### 3.5 Health checks
+### 3.6 Health checks
 
 | Endpoint | Auth | Purpose |
 |---|---|---|
@@ -173,7 +213,7 @@ Only `/api/health/live` bypasses host and HTTPS checks; everything else still
 requires the configured public `Host` and a proxy-supplied HTTPS request in
 production.
 
-### 3.6 Backups
+### 3.7 Backups
 
 The data directory contains the SQLite database and both image stores. Never
 copy only `app.sqlite` while the app is running: WAL contents may still be
@@ -186,6 +226,10 @@ cp -a data/original data/derived <backup-location>/
 
 Restore with the application stopped, replace the data directory, then start
 the app. Migrations are idempotent and run at every startup.
+
+For Vercel deployments, back up the Neon/Postgres database with the provider's
+export/snapshot tooling and version the Vercel Blob objects under the
+configured prefix; Vercel does not retain uploaded application data for you.
 
 ---
 

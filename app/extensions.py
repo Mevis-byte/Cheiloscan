@@ -5,7 +5,7 @@ from __future__ import annotations
 from flask import current_app
 
 from cheiloscan.db.session import Database
-from cheiloscan.storage.asset_store import AssetStore
+from cheiloscan.storage.base import AssetStoreLike
 
 
 def get_database() -> Database:
@@ -19,10 +19,10 @@ def get_database() -> Database:
     return database
 
 
-def get_asset_store() -> AssetStore:
+def get_asset_store() -> AssetStoreLike:
     """Return the asset store extension bound to the current application."""
     try:
-        store: AssetStore = current_app.extensions["asset_store"]
+        store: AssetStoreLike = current_app.extensions["asset_store"]
     except KeyError as exc:
         raise RuntimeError(
             "asset store extension is not initialized; was create_app used?"

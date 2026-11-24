@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import importlib.metadata
-import os
-import shutil
-from pathlib import Path
 
-from flask import Blueprint, current_app, jsonify
+from flask import Blueprint, jsonify
 from sqlalchemy.exc import SQLAlchemyError
 
-from ..extensions import get_database
+from ..extensions import get_asset_store, get_database
 from cheiloscan import __version__
-from cheiloscan.storage import storage_usage_bytes
 
 health_bp = Blueprint("health", __name__)
 
@@ -33,11 +29,31 @@ def _database_state() -> tuple[dict[str, object], bool]:
         return {"connected": False, "schema_version": None}, False
 
 
+def _storage_report() -> tuple[dict[str, object], bool]:
+    """Ask the configured store about its own health (local disk or Blob)."""
+    try:
+        info = get_asset_store().describe()
+    except Exception:  # noqa: BLE001 - health must report, never leak details
+        info = {"backend": "unknown", "available": False}
+    available = bool(info.get("available"))
+    report: dict[str, object] = {
+        "backend": str(info.get("backend", "unknown")),
+        "available": available,
+        "writable": bool(info.get("writable", available)),
+        "free_bytes": int(info.get("free_bytes", 0) or 0),
+        "bytes_used": int(info.get("bytes_used", 0) or 0),
+    }
+    return report, available
+
+
 def _storage_state() -> tuple[dict[str, object], bool]:
-    data_dir = Path(current_app.config["DATA_DIR"])
-    writable = data_dir.is_dir() and os.access(data_dir, os.W_OK)
-    free = shutil.disk_usage(data_dir).free if data_dir.is_dir() else 0
-    return {"writable": writable, "free_bytes": free}, writable and free > 0
+    report, available = _storage_report()
+    return {
+        "backend": report["backend"],
+        "available": report["available"],
+        "writable": report["writable"],
+        "free_bytes": report["free_bytes"],
+    }, available
 
 
 @health_bp.get("/api/health/live")
@@ -48,7 +64,7 @@ def live():
 
 @health_bp.get("/api/health/ready")
 def ready():
-    """Readiness: database reachable and data directory writable."""
+    """Readiness: database reachable and durable storage available."""
     database, database_ok = _database_state()
     storage, storage_ok = _storage_state()
     ok = database_ok and storage_ok
@@ -68,13 +84,16 @@ def ready():
 def health():
     """Detailed health report (authenticated in production)."""
     database, ok = _database_state()
-    storage, storage_ok = _storage_state()
+    storage, storage_ok = _storage_report()
     body = {
         "status": "ok" if ok and storage_ok else "error",
         "app": "cheiloscan",
         "version": __version__,
         "database": database,
-        "storage": {"bytes_used": storage_usage_bytes(Path(current_app.config["DATA_DIR"]))},
+        "storage": {
+            "backend": storage["backend"],
+            "bytes_used": storage["bytes_used"],
+        },
         "dependencies": {
             "flask": _dependency_version("flask"),
             "sqlalchemy": _dependency_version("sqlalchemy"),

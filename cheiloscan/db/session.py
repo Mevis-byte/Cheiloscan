@@ -1,8 +1,10 @@
 """Engine and session management for CheiloScan.
 
 ``Database`` owns the SQLAlchemy engine, applies SQLite connection pragmas
-(WAL journaling, enforced foreign keys, busy timeout) and provides
-context-managed sessions that commit on success and roll back on failure.
+(WAL journaling, enforced foreign keys, busy timeout) for local deployments,
+uses a fresh connection per unit of work for Postgres serverless deployments,
+and provides context-managed sessions that commit on success and roll back on
+failure.
 """
 
 from __future__ import annotations
@@ -10,20 +12,36 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from .migrations import apply_migrations
 from .models import SCHEMA_VERSION, Base, SchemaVersion
+
+# Stable cross-process lock so concurrent serverless cold starts cannot race
+# through create_all / migrations. This is a transaction-scoped advisory lock.
+_POSTGRES_SCHEMA_LOCK_KEY = 0x434845494C4F5343  # "CHEILOSC"
 
 
 class Database:
     """Owns the engine and session factory for one database URL."""
 
     def __init__(self, url: str, echo: bool = False) -> None:
+        for legacy in ("postgresql://", "postgres://"):
+            if url.startswith(legacy):
+                url = "postgresql+psycopg://" + url[len(legacy) :]
+                break
         self.url = url
-        self.engine: Engine = create_engine(url, echo=echo, future=True)
+        options: dict[str, object] = {"echo": echo, "future": True}
+        if not url.startswith("sqlite:"):
+            # Serverless invocations may be frozen between requests; keeping a
+            # pool open across them leaks stale sockets. A fresh connection per
+            # session is cheap here and always uses the current credentials.
+            options["poolclass"] = NullPool
+            options["pool_pre_ping"] = True
+        self.engine: Engine = create_engine(url, **options)
         if self.engine.dialect.name == "sqlite":
             _install_sqlite_pragmas(self.engine)
         self._session_factory = sessionmaker(
@@ -46,15 +64,21 @@ class Database:
     def init_schema(self) -> int:
         """Create tables if absent, then migrate to ``SCHEMA_VERSION``.
 
-        Idempotent and safe to call on every application startup.
+        Idempotent and safe to call on every application startup. On Postgres
+        a transaction-scoped advisory lock serializes concurrent cold starts.
 
         - fresh database          -> tables created, version stamped;
         - older database          -> ordered migrations applied, then stamped;
         - newer database          -> error (downgrade is never automatic);
         - same version            -> no-op.
         """
-        Base.metadata.create_all(self.engine)
         with self.engine.begin() as connection:
+            if connection.dialect.name == "postgresql":
+                connection.execute(
+                    text("SELECT pg_advisory_xact_lock(:key)"),
+                    {"key": _POSTGRES_SCHEMA_LOCK_KEY},
+                )
+            Base.metadata.create_all(bind=connection)
             row = connection.execute(select(SchemaVersion.version)).first()
             if row is None:
                 connection.execute(

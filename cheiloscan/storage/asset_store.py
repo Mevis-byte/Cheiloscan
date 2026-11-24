@@ -17,42 +17,34 @@ Guarantees:
 - **Containment.** Every path handed out is resolved and verified to live
   under the configured data directory; caller-supplied path components are
   validated against a strict character set.
+
+This is the default backend for local development and single-process
+deployments. Vercel deployments use :class:`VercelBlobAssetStore` instead,
+behind the same :class:`~cheiloscan.storage.base.AssetStoreLike` contract.
 """
 
 from __future__ import annotations
 
 import os
-import re
+import shutil
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
+from . import storage_usage_bytes
+from .base import (
+    AssetStoreLike,
+    StorageError,
+    StoredFile,
+    validate_component,
+    validate_relative_path,
+)
 from ..util.imageio import STORAGE_EXTENSIONS, sha256_hex
 
-_SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+__all__ = ["AssetStore", "StorageError", "StoredFile"]
 
 
-class StorageError(RuntimeError):
-    """A storage operation would violate an integrity guarantee."""
-
-
-@dataclass(frozen=True)
-class StoredFile:
-    """A file written to (or found in) the store."""
-
-    relative_path: str
-    sha256: str
-    size_bytes: int
-    created: bool
-
-
-def _validate_component(name: str, *, label: str) -> str:
-    if not _SAFE_COMPONENT.match(name) or name in {".", ".."}:
-        raise StorageError(f"invalid {label}: {name!r}")
-    return name
-
-
-class AssetStore:
+class AssetStore(AssetStoreLike):
     """Filesystem store for original and derived image assets."""
 
     def __init__(self, data_dir: Path) -> None:
@@ -66,12 +58,13 @@ class AssetStore:
 
     def resolve(self, relative_path: str) -> Path:
         """Resolve a store-relative path, refusing anything outside the store."""
-        candidate = Path(relative_path)
-        if candidate.is_absolute() or ".." in candidate.parts:
-            raise StorageError(f"unsafe storage path: {relative_path!r}")
+        validated = validate_relative_path(relative_path)
+        candidate = Path(validated)
         resolved = (self.data_dir / candidate).resolve()
         if resolved != self.data_dir and self.data_dir not in resolved.parents:
-            raise StorageError(f"storage path escapes the data directory: {relative_path!r}")
+            raise StorageError(
+                f"storage path escapes the data directory: {relative_path!r}"
+            )
         return resolved
 
     # ------------------------------------------------------------ originals
@@ -123,8 +116,8 @@ class AssetStore:
         image_format: str,
     ) -> StoredFile:
         """Persist one pipeline stage output under its run directory."""
-        _validate_component(run_id, label="run id")
-        _validate_component(role, label="artifact role")
+        validate_component(run_id, label="run id")
+        validate_component(role, label="artifact role")
         if image_format not in STORAGE_EXTENSIONS:
             raise StorageError(f"unsupported image format: {image_format!r}")
         if not data:
@@ -142,13 +135,45 @@ class AssetStore:
             created=True,
         )
 
+    def delete_derived_run(self, run_id: str) -> None:
+        """Remove stage files written before a failed run is finalized."""
+        validate_component(run_id, label="run id")
+        directory = self.resolve(f"derived/{run_id}")
+        if directory.is_dir():
+            shutil.rmtree(directory, ignore_errors=True)
+
     # ---------------------------------------------------------------- reads
 
     def read(self, relative_path: str) -> bytes:
         return self.resolve(relative_path).read_bytes()
 
+    def iter_read(self, relative_path: str) -> Iterator[bytes]:
+        """Stream asset bytes in bounded chunks (avoids buffering in memory)."""
+        with self.resolve(relative_path).open("rb") as handle:
+            while True:
+                chunk = handle.read(64 * 1024)
+                if not chunk:
+                    return
+                yield chunk
+
     def exists(self, relative_path: str) -> bool:
         return self.resolve(relative_path).is_file()
+
+    def describe(self) -> dict[str, object]:
+        """Report local backend health and real usage for health endpoints."""
+        try:
+            free_bytes = shutil.disk_usage(self.data_dir).free
+        except OSError:  # pragma: no cover - unusual mounted filesystems
+            free_bytes = 0
+        writable = self.data_dir.is_dir() and os.access(self.data_dir, os.W_OK)
+        available = writable and free_bytes > 0
+        return {
+            "backend": "local",
+            "available": available,
+            "writable": writable,
+            "free_bytes": free_bytes,
+            "bytes_used": storage_usage_bytes(self.data_dir),
+        }
 
     # ------------------------------------------------------------- internal
 

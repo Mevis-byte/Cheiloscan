@@ -22,6 +22,8 @@ from .security import install_security
 from cheiloscan.db.session import Database
 from cheiloscan.storage import ensure_storage_directories
 from cheiloscan.storage.asset_store import AssetStore
+from cheiloscan.storage.base import AssetStoreLike
+from cheiloscan.storage.blob_store import VercelBlobAssetStore
 
 APP_NAME = "cheiloscan"
 
@@ -43,12 +45,17 @@ def create_app(config: Mapping[str, object] | None = None) -> Flask:
 
     configure_logging(app)
 
-    # Storage layout + database schema (both idempotent, safe on every start).
-    ensure_storage_directories(Path(app.config["DATA_DIR"]))
+    # Local/waitress deployments need the data directory tree *before* the
+    # SQLite engine opens its file. Vercel uses external durable services and
+    # must not attempt to create directories in the read-only function bundle.
+    if str(app.config["STORAGE_BACKEND"]) == "local":
+        ensure_storage_directories(Path(app.config["DATA_DIR"]))
+
+    # Database schema + storage backend (both idempotent, safe on every start).
     database = Database(app.config["DATABASE_URL"])
     database.init_schema()
     app.extensions["database"] = database
-    app.extensions["asset_store"] = AssetStore(Path(app.config["DATA_DIR"]))
+    app.extensions["asset_store"] = _create_asset_store(app)
 
     register_blueprints(app)
     register_error_handlers(app)
@@ -63,6 +70,21 @@ def create_app(config: Mapping[str, object] | None = None) -> Flask:
         )
     install_security(app)
     return app
+
+
+def _create_asset_store(app: Flask) -> AssetStoreLike:
+    """Build the configured durable asset store."""
+    backend = str(app.config["STORAGE_BACKEND"])
+    if backend == "local":
+        data_dir = Path(app.config["DATA_DIR"])
+        ensure_storage_directories(data_dir)
+        return AssetStore(data_dir)
+    if backend == "vercel_blob":
+        return VercelBlobAssetStore(
+            prefix=str(app.config["STORAGE_PREFIX"]),
+            access=str(app.config["BLOB_ACCESS"]),  # type: ignore[arg-type]
+        )
+    raise ValueError(f"unsupported storage backend: {backend!r}")
 
 
 def _register_request_hooks(app: Flask) -> None:

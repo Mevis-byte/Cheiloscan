@@ -1,9 +1,8 @@
-"""Local storage management.
+"""Storage layout helpers shared by local and serverless backends.
 
-Phase 1 only prepares the on-disk layout documented in
-docs/ARCHITECTURE.md §6.1. The content-addressed asset store itself
-(save_original / save_derived with immutability enforcement) is implemented
-in Phase 2 together with image intake.
+The local directory tree is documented in docs/ARCHITECTURE.md §6.1. On
+Vercel these helpers are not used for durable data; the asset store is backed
+by Vercel Blob behind the same contract.
 """
 
 from __future__ import annotations

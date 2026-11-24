@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CheiloScan — Dashboard</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body data-page="dashboard">
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">CheiloScan</span>
+        <span class="brand-sub">lip-print research</span>
+      </div>
+      <nav class="nav">
+        <a href="/" class="active">Dashboard</a>
+        <a href="/samples">Samples</a>
+        <a href="/analyses">Analyses</a>
+        <a href="/comparisons">Comparisons</a>
+      </nav>
+      <div class="sidebar-note">
+        Experimental research tool. Outputs are descriptive measurements,
+        not biometric identification conclusions.
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="header">
+        <h1>Dashboard</h1>
+        <span class="badge badge-experimental">experimental</span>
+      </header>
+
+      <main class="content">
+        <div id="load-error" class="alert alert-error hidden" role="alert"></div>
+
+        <section class="stats-grid" aria-label="Database statistics">
+          <div class="stat-card">
+            <div class="stat-label">Samples</div>
+            <div class="stat-value" id="stat-samples">–</div>
+            <div class="stat-sub" id="stat-samples-active">active: –</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Images</div>
+            <div class="stat-value" id="stat-images">–</div>
+            <div class="stat-sub">stored assets</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Analyses</div>
+            <div class="stat-value" id="stat-analyses">–</div>
+            <div class="stat-sub" id="stat-analyses-breakdown">–</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Comparisons</div>
+            <div class="stat-value" id="stat-comparisons">–</div>
+            <div class="stat-sub" id="stat-comparisons-breakdown">–</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Local storage</div>
+            <div class="stat-value stat-value-sm" id="stat-storage">–</div>
+            <div class="stat-sub">database + image store</div>
+          </div>
+        </section>
+
+        <div id="empty-state" class="empty-state hidden">
+          <div class="empty-state-title">No data recorded yet</div>
+          <p>
+            The local database is empty. Upload a sample image on the Samples
+            page to begin; this dashboard shows only real recorded counts —
+            never estimates.
+          </p>
+        </div>
+
+        <section class="meta-note" aria-label="Status">
+          <p id="db-note">
+            Counts come from the local SQLite database.
+            <span id="generated-at"></span>
+          </p>
+        </section>
+      </main>
+
+      <footer class="footer">
+        CheiloScan — local-first research application · not a validated
+        biometric identification system
+      </footer>
+    </div>
+  </div>
+  <script src="/js/app.js"></script>
+</body>
+</html>
